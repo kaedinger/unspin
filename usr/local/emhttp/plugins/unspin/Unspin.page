@@ -1,0 +1,7 @@
+Menu="Utilities"
+Title="Unspin"
+Icon="fire"
+---
+<?php
+include('/usr/local/emhttp/plugins/unspin/Unspin.php');
+?>

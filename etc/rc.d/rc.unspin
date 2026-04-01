@@ -1,0 +1,154 @@
+#!/bin/bash
+# rc.unspin — Unspin daemon service controller
+# Usage: /etc/rc.d/rc.unspin {start|stop|restart|status|pause|unpause|toggle} <name>
+
+DAEMON=/usr/local/sbin/unspind
+PID_FILE=/var/run/unspind.pid
+PAUSE_DIR=/var/run/unspind.pause.d
+LOG_FILE=/var/log/unspin.log
+
+log_info() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO ] $1" >> "$LOG_FILE"
+}
+
+pause_count() {
+    local n=0
+    [ -d "$PAUSE_DIR" ] && n=$(find "$PAUSE_DIR" -maxdepth 1 -type f | wc -l)
+    echo "$n"
+}
+
+is_running() {
+    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+unspin_start() {
+    if is_running; then
+        echo "unspind is already running (PID $(cat "$PID_FILE"))."
+        return 0
+    fi
+    if [ ! -x "$DAEMON" ]; then
+        echo "Error: $DAEMON not found or not executable."
+        return 1
+    fi
+    rm -rf "$PAUSE_DIR"
+    echo "Starting unspind..."
+    "$DAEMON" > /dev/null 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "unspind started (PID $(cat "$PID_FILE"))."
+}
+
+unspin_stop() {
+    if ! is_running; then
+        echo "unspind is not running."
+        rm -f "$PID_FILE"
+        return 0
+    fi
+    echo "Stopping unspind..."
+    kill "$(cat "$PID_FILE")"
+    local i
+    for i in 1 2 3 4 5; do
+        kill -0 "$(cat "$PID_FILE")" 2>/dev/null || break
+        sleep 1
+    done
+    rm -f "$PID_FILE"
+    rm -rf "$PAUSE_DIR"
+    echo "unspind stopped."
+}
+
+unspin_status() {
+    if is_running; then
+        echo "unspind is running (PID $(cat "$PID_FILE"))."
+        local n
+        n=$(pause_count)
+        if [ "$n" -gt 0 ]; then
+            echo "Paused ($n lock(s)):"
+            ls -1 "$PAUSE_DIR" 2>/dev/null | sed 's/^/  /'
+        fi
+        return 0
+    else
+        echo "unspind is not running."
+        return 1
+    fi
+}
+
+validate_name() {
+    if [ -z "$1" ]; then
+        echo "Error: a name is required (e.g. $0 $2 borgbackup)."
+        return 1
+    fi
+    if ! echo "$1" | grep -qE '^[a-zA-Z0-9._-]+$'; then
+        echo "Error: name must contain only letters, digits, dots, hyphens, and underscores."
+        return 1
+    fi
+    return 0
+}
+
+unspin_pause() {
+    validate_name "$1" "pause" || return 1
+    if ! is_running; then
+        echo "unspind is not running."
+        return 1
+    fi
+    mkdir -p "$PAUSE_DIR"
+    touch "$PAUSE_DIR/$1"
+    local n
+    n=$(pause_count)
+    log_info "Pause lock added — $1 ($n lock(s) held)"
+    if [ "$n" -eq 1 ]; then
+        kill -USR1 "$(cat "$PID_FILE")"
+    fi
+    echo "unspind paused by '$1' ($n lock(s) held)."
+}
+
+unspin_unpause() {
+    validate_name "$1" "unpause" || return 1
+    if ! is_running; then
+        echo "unspind is not running."
+        return 1
+    fi
+    if [ ! -f "$PAUSE_DIR/$1" ]; then
+        echo "No pause lock '$1' found."
+        return 1
+    fi
+    rm -f "$PAUSE_DIR/$1"
+    local n
+    n=$(pause_count)
+    log_info "Pause lock released — $1 ($n lock(s) remaining)"
+    if [ "$n" -eq 0 ]; then
+        kill -USR2 "$(cat "$PID_FILE")"
+        echo "unspind unpaused (last lock '$1' released)."
+    else
+        echo "Lock '$1' released ($n lock(s) remaining)."
+    fi
+}
+
+unspin_toggle() {
+    if ! is_running; then
+        echo "unspind is not running."
+        return 1
+    fi
+    if [ "$(pause_count)" -gt 0 ]; then
+        log_info "Toggle — clearing all pause locks"
+        rm -rf "$PAUSE_DIR"
+        kill -USR2 "$(cat "$PID_FILE")"
+        echo "unspind unpaused (all locks cleared)."
+    else
+        validate_name "$1" "toggle" || return 1
+        mkdir -p "$PAUSE_DIR"
+        touch "$PAUSE_DIR/$1"
+        log_info "Toggle — pause lock added: $1"
+        kill -USR1 "$(cat "$PID_FILE")"
+        echo "unspind paused by '$1'."
+    fi
+}
+
+case "$1" in
+    start)   unspin_start ;;
+    stop)    unspin_stop ;;
+    restart) unspin_stop; sleep 1; unspin_start ;;
+    status)  unspin_status ;;
+    pause)   unspin_pause "$2" ;;
+    unpause) unspin_unpause "$2" ;;
+    toggle)  unspin_toggle "$2" ;;
+    *)       echo "Usage: $0 {start|stop|restart|status|pause|unpause|toggle} <name>"; exit 1 ;;
+esac

@@ -1,0 +1,138 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "Unspin">
+  <!ENTITY author    "kaedinger">
+  <!ENTITY version   "2026.04.01.59747">
+  <!ENTITY launch    "Utilities/Unspin">
+  <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
+  <!ENTITY pluginURL "&gitURL;/unspin.plg">
+]>
+
+<PLUGIN
+  name="&name;"
+  author="&author;"
+  version="&version;"
+  launch="&launch;"
+  pluginURL="&pluginURL;"
+  icon="fire"
+  description="Automatic file tiering for Unraid. Watches file accesses in real time via fanotify and promotes hot files to fast storage (cache/NVMe). Cold demotion is handled by Unraid's mover. Fully configurable via the Utilities settings page."
+>
+
+<CHANGES>
+### 2026.04.01.59747
+- Initial release - reworked from the now-deprecated Hotfile project
+</CHANGES>
+
+<!--
+  ============================================================
+  Install/upgrade the plugin package (TXZ archive)
+  ============================================================
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+echo "                                                       "
+echo "                                                       "
+echo "                                  ##                   "
+echo "                                  #####                "
+echo "                                   ######              "
+echo "                                   ########            "
+echo "                                  ###########          "
+echo "                                 #############         "
+echo "                               ################        "
+echo "                             ##################        "
+echo "                           ####################        "
+echo "                         ######################        "
+echo "                       ########################        "
+echo "                      #########################        "
+echo "                      ########################         "
+echo "                      #######################          "
+echo "                      #####################            "
+echo "                      ###################              "
+echo "                      #################                "
+echo "                       ##############                  "
+echo "                        ###########                    "
+echo "                         ##########                    "
+echo "                           #######                     "
+echo "                             ######                    "
+echo "                                ###                    "
+echo "                                                       "
+echo "                                                       "
+echo "                                                       "
+echo "              #########################################"
+VER="&version;"
+LEFT="  U N S P I N  "
+RIGHT="v${VER}  "
+PAD=$(( 39 - ${#LEFT} - ${#RIGHT} ))
+printf "              #%s%${PAD}s%s#\n" "$LEFT" "" "$RIGHT"
+echo "              #########################################"
+echo ""
+
+# Stop daemon before replacing files
+/etc/rc.d/rc.unspin stop 2>/dev/null
+
+# Remove old version if present
+removepkg &name; 2>/dev/null
+
+# Download and install the package
+wget -q -O /tmp/&name;.txz "https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz"
+installpkg /tmp/&name;.txz
+rm -f /tmp/&name;.txz
+</INLINE>
+</FILE>
+
+<!--
+  ============================================================
+  Post-install: set up config defaults and start daemon
+  ============================================================
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+# Create config dir
+mkdir -p /boot/config/plugins/unspin
+
+# Copy default config if none exists, then auto-detect array disks
+CFG=/boot/config/plugins/unspin/unspin.cfg
+if [ ! -f "$CFG" ]; then
+  cp /usr/local/emhttp/plugins/unspin/unspin.cfg.default "$CFG"
+
+  # Detect mounted array disks (/mnt/disk1, /mnt/disk2, …)
+  DISK_PATHS=$(awk '$2 ~ /^\/mnt\/disk[0-9]+$/ {print $2}' /proc/mounts | sort -V | paste -sd,)
+  if [ -n "$DISK_PATHS" ]; then
+    sed -i "s|SCAN_PATHS=.*|SCAN_PATHS=\"$DISK_PATHS\"|" "$CFG"
+    echo "Unspin: auto-detected array disks: $DISK_PATHS"
+  else
+    echo "Unspin: no array disks detected - set SCAN_PATHS manually in the settings page."
+  fi
+fi
+
+touch /var/log/unspin.log
+chmod +x /usr/local/sbin/unspind /etc/rc.d/rc.unspin 2>/dev/null
+
+# Start daemon if service is enabled
+source "$CFG"
+if [ "$SERVICE" = "enabled" ]; then
+  /etc/rc.d/rc.unspin start
+fi
+
+echo "Unspin plugin installed successfully."
+</INLINE>
+</FILE>
+
+<!--
+  ============================================================
+  Removal: stop daemon, keep user config on flash
+  ============================================================
+-->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+# Stop the daemon
+/etc/rc.d/rc.unspin stop 2>/dev/null
+
+# Remove package
+removepkg &name;
+
+echo "Unspin plugin removed. Config preserved at /boot/config/plugins/unspin/"
+</INLINE>
+</FILE>
+
+</PLUGIN>

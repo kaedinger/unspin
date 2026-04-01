@@ -1,0 +1,18 @@
+# Build artifacts
+build/
+pkg/
+*.txz
+
+# Compiled daemon binary (built by CI, not committed)
+usr/local/sbin/unspind
+
+# Object files
+*.o
+*.obj
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

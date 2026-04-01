@@ -1,0 +1,46 @@
+# Unspin Configuration
+# Managed by the Unspin plugin settings page
+# Do not edit while the daemon is running
+
+SERVICE="disabled"
+HOT_PATH="/mnt/cache"
+SCAN_PATHS="/mnt/disk1,/mnt/disk2"
+MAX_HOT_FILL_PERCENT="80"
+
+# Rule 1: small-file rule - promote files <= threshold after N reads
+SMALL_FILE_THRESHOLD="10 MB"
+SMALL_MIN_ACCESSES="1"
+
+# Rule 2: large-file short window - promote after N reads within M minutes
+# Intended for movie streaming etc.
+LARGE_SHORT_MIN_ACCESSES="100"
+LARGE_SHORT_WINDOW_MINS="5"
+
+# Rule 3: large-file long window - promote after N opens within H hours
+# Intended for regularly consulted files (e.g. 3 opens in 24 hours)
+LARGE_LONG_MIN_ACCESSES="2"
+LARGE_LONG_WINDOW_HOURS="26"
+
+# Rule toggles (yes/no)
+RULE1_ENABLED="yes"
+RULE1_FALLTHROUGH="yes"
+RULE2_ENABLED="yes"
+RULE3_ENABLED="yes"
+# Rule 3: thumbnail filter - skip opens where read count is between 1 and this value.
+# Opens with 0 reads (mmap, e.g. PDFs) and opens with >= this many reads are always counted.
+# Set to 0 to disable.
+RULE3_MIN_READS="6"
+
+# Pause event counting while any rsync process is running (yes/no)
+# Covers tools like Unbalanced that use rsync to move files between array disks.
+# Mover always pauses Unspin regardless of this setting.
+PAUSE_ON_RSYNC="yes"
+
+# Comma-separated partial path patterns to exclude from tiering
+EXCLUDE_PATTERNS="/nevercache"
+
+# Dry run: log promotion decisions without moving any files (yes/no)
+DRY_RUN="yes"
+
+# Log verbosity (info/debug)
+LOG_LEVEL="info"
