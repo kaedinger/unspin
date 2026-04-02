@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- fix: human_size used decimal (1e6) while parse_size used binary (1024) units — now both use binary
+
 ### 2026.04.02.46831
 - process external transfer detection (rsync/mover) outside of monitored events
 - cosmetics and update Claude generated documentation, comments, and logs

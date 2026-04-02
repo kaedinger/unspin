@@ -42,7 +42,11 @@ static constexpr size_t     FAN_BUF_BYTES        = 65536;              // fanoti
 static constexpr int        MOVER_CACHE_SEC      = 5;                  // how long to cache mover-active result
 static constexpr uint64_t   FAN_WATCH_MASK       = FAN_ACCESS | FAN_OPEN | FAN_CLOSE_NOWRITE
                                                  | FAN_CLOSE_WRITE | FAN_MODIFY;
-static constexpr int64_t    SMALL_F_THRESHOLD    = 10LL * 1024 * 1024;
+static constexpr int64_t    KB                   = 1024;
+static constexpr int64_t    MB                   = 1024 * KB;
+static constexpr int64_t    GB                   = 1024 * MB;
+static constexpr int64_t    TB                   = 1024 * GB;
+static constexpr int64_t    SMALL_F_THRESHOLD    = 10 * MB;
 static constexpr const char RULE1[]              = "rule 1 - small";
 static constexpr const char RULE2[]              = "rule 2 - big, reads";
 static constexpr const char RULE3[]              = "rule 3 - big, opens";
@@ -155,19 +159,19 @@ static int64_t parse_size(const std::string& s) {
     auto suf = trim(s.substr(i));
     for (char& c : suf) c = (char)toupper((unsigned char)c);
 
-    if (suf == "KB" || suf == "K") return (int64_t)(num * 1024);
-    if (suf == "MB" || suf == "M") return (int64_t)(num * 1024 * 1024);
-    if (suf == "GB" || suf == "G") return (int64_t)(num * 1024LL * 1024 * 1024);
-    if (suf == "TB" || suf == "T") return (int64_t)(num * 1024LL * 1024 * 1024 * 1024);
+    if (suf == "KB" || suf == "K") return (int64_t)(num * KB);
+    if (suf == "MB" || suf == "M") return (int64_t)(num * MB);
+    if (suf == "GB" || suf == "G") return (int64_t)(num * GB);
+    if (suf == "TB" || suf == "T") return (int64_t)(num * TB);
     return (int64_t)num;
 }
 
 static std::string human_size(int64_t bytes) {
     char buf[32];
-    if      (bytes >= (int64_t)1e12) snprintf(buf, sizeof(buf), "%.1f TB", bytes / 1e12);
-    else if (bytes >= (int64_t)1e9)  snprintf(buf, sizeof(buf), "%.1f GB", bytes / 1e9);
-    else if (bytes >= (int64_t)1e6)  snprintf(buf, sizeof(buf), "%.1f MB", bytes / 1e6);
-    else                             snprintf(buf, sizeof(buf), "%.1f KB", bytes / 1e3);
+    if      (bytes >= TB) snprintf(buf, sizeof(buf), "%.1f TB", (double)bytes / TB);
+    else if (bytes >= GB) snprintf(buf, sizeof(buf), "%.1f GB", (double)bytes / GB);
+    else if (bytes >= MB) snprintf(buf, sizeof(buf), "%.1f MB", (double)bytes / MB);
+    else                  snprintf(buf, sizeof(buf), "%.1f KB", (double)bytes / KB);
     return buf;
 }
 
