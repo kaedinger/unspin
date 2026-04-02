@@ -391,9 +391,9 @@ static bool transfers_active() {
     auto prev = _transfers_cached;
     _transfers_cached = transfers_running();
     if (_transfers_cached && !prev)
-        log_info("Mover/rsync started - pausing event counting");
+        log_info("Mover or rsync started - pausing monitoring");
     else if (!_transfers_cached && prev)
-        log_info("Mover/rsync finished - resuming event counting");
+        log_info("Mover or rsync finished - resuming monitoring");
     return _transfers_cached;
 }
 
@@ -1008,7 +1008,12 @@ int main(int argc, char* argv[]) {
             log_err("poll: " + std::string(strerror(errno)));
             break;
         }
-        if (ret > 0 && (pfd.revents & POLLIN))
+        if (ret == 0) {
+            // Poll timeout - refresh transfer state so "finished" is logged promptly
+            transfers_active();
+            continue;
+        }
+        if (pfd.revents & POLLIN)
             process_events(fan_fd);
     }
 

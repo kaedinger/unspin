@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- process external transfer detection (rsync/mover) outside of monitored events
+
 ### 2026.04.01.59747
 - Initial release - reworked from the now-deprecated Hotfile project
 </CHANGES>
