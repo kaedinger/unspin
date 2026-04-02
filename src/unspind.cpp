@@ -701,28 +701,18 @@ static void handle_event(const std::string& path, EvType ev) {
         auto dec = should_promote(rec, size);
         if (!dec.promote) return;
 
-        // Small files defer on any open handle (save would fail if source is unlinked, ask me how
-        // I know).
-        // Large files promote immediately even while open for reading - the reader's fd stays valid
-        // on the unlinked inode so playback continues; reads do UNFORTUNATELY not redirect mid-stream!
-        // It would be a huge hassle to mess with shfs/FUSE while NOT watching share activty, which we
-        // don't do here. BUT: the next open picks up the cache copy.
-        // Deferral only when a write is confirmed via FAN_MODIFY.
-        auto defer = (size <= _cfg.small_file_threshold)
-                   ? (rec.open_count > 0)
-                   : (rec.open_count > 0 && rec.has_write_open);
-        if (defer) {
+        // Defer promotion while any handle is open. Unlinking the source while a reader
+        // (SMB/NFS/local) holds an fd causes the client to lose the file — shfs won't
+        // redirect to the cache copy until the next open.
+        if (rec.open_count > 0) {
             auto first = !rec.pending_promote;
             rec.pending_promote = true;
-            rec.pending_dec = dec; // update in case a stronger rule now applies
+            rec.pending_dec = dec;
             if (first)
-                log_debug("[" + dec.rule + "] Deferred (" +
-                          std::string(size <= _cfg.small_file_threshold ? "small file open" : "write open") +
-                          "): " + path + " (" + human_size(size) + ") - " + dec.reason);
+                log_debug("[" + dec.rule + "] Deferred (file open): " +
+                          path + " (" + human_size(size) + ") - " + dec.reason);
             return;
         }
-        if (rec.open_count > 0)
-            log_debug("[" + dec.rule + "] Promoting open file: " + path);
         do_promote(dec);
     };
 

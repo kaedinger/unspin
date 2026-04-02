@@ -32,13 +32,7 @@ A file meets rules 2 or 3 if either window threshold is satisfied.
 
 ### Promotion timing
 
-Promotion is not triggered the moment a threshold is reached if the file is still open - the behaviour depends on file size:
-
-| File size | Open handles | What happens |
-|---|---|---|
-| **Small** | any open handle | Deferred until all handles are closed - prevents save failures in editors that keep files open while writing |
-| **Large** | read-only opens | Promoted immediately, even while being read - the reader's existing fd stays valid on the old inode so playback continues uninterrupted; there is no live switching unfortunately (shfs fiddling while at the core monitoring **disk** access is - so far - really error prone). The next open picks up the cache copy |
-| **Large** | write confirmed (FAN_MODIFY seen) | Deferred until all handles are closed |
+Promotion is always deferred until all open handles on the file are closed. Unlinking the source while a reader (SMB, NFS, local process) still holds an fd would cause the client to lose the file - shfs does not redirect to the cache copy mid-stream. By waiting for close, the next open transparently picks up the promoted copy.
 
 Cold demotion is handled by Unraid's built-in mover (cache → array direction).
 
@@ -48,7 +42,7 @@ Cold demotion is handled by Unraid's built-in mover (cache → array direction).
 
 - **Event-driven** - reacts to each file read in real time via fanotify on the underlying array disk mounts, no polling or cron schedule
 - **Two-tier rule set** - separate thresholds for small files (first-access promotion) and large files (streaming/periodic use detection)
-- **Immediate promotion for open large files** - large files are promoted as soon as they qualify even while being read; the reader's fd stays valid on the old inode so playback continues; next open picks up the cache copy
+- **Deferred promotion** - promotion waits until all open handles are closed, so readers never lose their file mid-stream
 - **Use Cache=No respected** - shares configured with "Use Cache: No" in Unraid are never promoted
 - **Mover/rsync-aware** - skips promotion while Unraid's mover (or a local rsync) is running to avoid conflicts
 - **Hot-tier fill guard** - stops promoting when the cache exceeds a configurable fill %
