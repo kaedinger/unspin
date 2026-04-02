@@ -23,6 +23,7 @@
 - fix: human_size used decimal (1e6) while parse_size used binary (1024) units — now both use binary
 - fix: open/close tracking during pause/rsync — close events were swallowed, leaving open_count inflated and blocking promotion
 - log full config on SIGHUP reload, not just watched mounts
+- docs: add remote pause/unpause section for backup scripts
 
 ### 2026.04.02.46831
 - process external transfer detection (rsync/mover) outside of monitored events

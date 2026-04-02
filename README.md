@@ -139,6 +139,18 @@ rc.unspin unpause borgbackup    # still paused (1 lock)
 rc.unspin unpause rsnapshot     # resumed (0 locks)
 ```
 
+### Remote pause from backup scripts
+
+Wrap your backup jobs with `pause` / `unpause` over SSH so Unspin doesn't count (or promote) files while they're being read by the backup tool:
+
+```bash
+ssh root@nas /etc/rc.d/rc.unspin pause borgbackup
+borg create ssh://root@nas/mnt/disk1/backups::daily /data
+ssh root@nas /etc/rc.d/rc.unspin unpause borgbackup
+```
+
+Because locks stack, multiple backup tools can pause independently without interfering with each other.
+
 The daemon also accepts signals directly (no stacking):
 
 ```bash
