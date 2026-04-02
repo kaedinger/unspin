@@ -131,7 +131,6 @@ dt.hf-rule-label {
   gap: 8px;
   margin-top: 12px;
   font-size: 0.85em;
-  opacity: 0.6;
   transition: opacity 0.2s;
 }
 .hf-footer:hover { opacity: 1; }
@@ -245,7 +244,7 @@ dt.hf-rule-label {
   <dd>
     <input type="text" id="hf_EXCLUDE_PATTERNS" name="EXCLUDE_PATTERNS"
       value="<?= htmlspecialchars($c['EXCLUDE_PATTERNS']) ?>">
-    <div class="hf-help">Comma-separated partial path strings to skip, e.g. <code>/pagefile,/nevercache</code>.</div>
+    <div class="hf-help">Comma-separated partial path strings to skip, e.g. <code>/pagefile,/qbittorrent</code>.</div>
   </dd>
 </dl>
 
@@ -370,6 +369,7 @@ dt.hf-rule-label {
   style="width:100%;font-family:monospace;font-size:0.8em;resize:vertical;"><?= $log_lines ?: 'No log entries yet.' ?></textarea>
 
 <div class="hf-footer">
+  Made with ♥ by
   <img src="https://github.com/kaedinger.png" alt="kaedinger" class="hf-footer-avatar">
   <a href="https://kaedinger.de" target="_blank" rel="noopener">kaedinger</a>
   <span class="hf-footer-sep">·</span>
@@ -377,9 +377,9 @@ dt.hf-rule-label {
   <span class="hf-footer-sep">·</span>
   <span class="hf-footer-soon" title="Support forum - coming soon">Forum</span>
   <span class="hf-footer-sep">·</span>
-  <span class="hf-footer-soon" title="Support forum - coming soon">Sponsor ♥ - THANK YOU</a>
+  <span class="hf-footer-soon" title="Support forum - coming soon">Sponsor ♥ - THANK YOU</a></span>
   <span class="hf-footer-sep">·</span>
-  <a href="https://www.paypal.com/donate/?hosted_button_id=ASP53VDRXMDYE" target="_blank" rel="noopener">Donate ♥ - THANK YOU</a>
+  <a href="https://www.paypal.com/donate/?hosted_button_id=ASP53VDRXMDYE" target="_blank" rel="noopener">Donate ♥ - THANK YOU</a></span>
 </div>
 
 <script>

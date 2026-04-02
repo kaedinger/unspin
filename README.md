@@ -1,6 +1,6 @@
-# Unspin - Real-Time Hot-File Tiering for Unraid
+# Unspin - Rudimentary Hot-File Tiering for Unraid
 
-Automatically promotes your most-accessed files to faster storage using a lightweight C++ daemon that watches file reads in real time. The main goal is to have fewer disk spin-ups (hence the name), but we'll take the faster access, too ;-)
+Automatically promotes your most-accessed files to faster storage using a lightweight C++ daemon that watches file access. The main goal is to have fewer disk spin-ups (hence the name), but we'll take the faster access, too ;-)
 
 <p align="center">
   <img src="images/header.png" alt="Unspin banner" />
@@ -28,13 +28,15 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 
 A file meets rules 2 or 3 if either window threshold is satisfied.
 
-**Why these rules?** Based just on the developer's use cases: Under ideal circumstances we would cache everything - but we don't have the space, we only have 512 GB. Thus, we have to select: we can't have a huge Linux ISO using up precious space if it's just held open for a few bytes of bittorrent upload. But of course that changes if it is being constantly read, or on a regular basis. A song played only once does not need to be promoted, but if we play it every day, it should be. You'll have to play around with the rule settings to best match your own use cases.
+**Why these rules?** Based just on the developer's use cases: Under ideal circumstances we would cache everything - but we don't have the space, we only have 512 GB. Thus, we have to select: we can't have a huge Linux ISO using up precious space if it's just held open for a few bytes of torrent upload. But of course that changes if it is being constantly read, or on a regular basis. A song played only once does not need to be promoted, but if we play it every day, it should be. You'll have to play around with the rule settings to best match your own use cases.
+
+Make sure this does what you want! There's a dry-run mode; use it!
 
 ### Promotion timing
 
 Promotion is always deferred until all open handles on the file are closed. Unlinking the source while a reader (SMB, NFS, local process) still holds an fd would cause the client to lose the file - shfs does not redirect to the cache copy mid-stream. By waiting for close, the next open transparently picks up the promoted copy.
 
-Cold demotion is handled by Unraid's built-in mover (cache → array direction).
+There's no explicit cold demotion - for now we rely on Unraid's mover.
 
 ---
 
@@ -183,7 +185,7 @@ kill -RTMIN  $(cat /var/run/unspind.pid)   # toggle pause
 
 ## How Files Are Moved
 
-When a file qualifies for promotion, unspind
+When a file qualifies for promotion, Unspin
 
 1. resolves the destination path by rebasing the file path to `HOT_PATH` (e.g. `/mnt/user/media/foo.mkv` -> `/mnt/cache/media/foo.mkv`),
 2. copies data using `sendfile` (zero-copy kernel transfer),
@@ -195,9 +197,9 @@ If the copy fails, the source is left untouched and the partial destination is d
 
 ## Requirements
 
-- Unraid 6.9+
+- Unraid 7.0+ (probably even earlier, but I tested it with 7.2.3 onwards)
 - Linux kernel 2.6.37+ with fanotify support (all Unraid kernels qualify)
-- No external dependencies - the daemon is a statically-linkable C++17 binary
+- No external dependencies
 
 ---
 
