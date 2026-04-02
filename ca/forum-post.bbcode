@@ -1,0 +1,86 @@
+[b][size=5]Unspin - Rudimentary Hot-File Tiering for Unraid[/size][/b]
+
+Unspin automatically promotes your most-accessed files to faster storage (cache/NVMe) using a lightweight C++ daemon that watches file access in real time. The main goal is to have fewer disk spin-ups (hence the name), but we'll take the faster access, too ;-)
+
+There's no explicit cold demotion - for now we rely on Unraid's mover.
+
+[b]Make sure this does what you want! There's a dry-run mode; use it![/b]
+
+[b][size=4]How It Works[/size][/b]
+
+Unspin runs [font=monospace]unspind[/font], a daemon that uses Linux's [b]fanotify[/b] interface to receive events every time a file is opened or read on your array disks. It applies three configurable promotion rules:
+
+[list]
+[*][b]Small file rule[/b] - files below a size threshold get promoted after N total reads (e.g. promote a config file on first access)
+[*][b]Large file - short window[/b] - N reads within M minutes triggers promotion (e.g. 100 reads in 5 min = streaming video)
+[*][b]Large file - long window[/b] - N opens within H hours triggers promotion (e.g. 3 opens in 24h = frequently consulted PDF)
+[/list]
+
+Promotion is always deferred until all open file handles are closed, so readers (SMB, NFS, local) never lose their file mid-stream.
+
+[b]Why these rules?[/b] Under ideal circumstances we would cache everything - but we don't have the space. We can't have a huge Linux ISO using up precious cache space if it's just held open for a few bytes of torrent upload. But of course that changes if it's being constantly read, or accessed on a regular basis. You'll have to play around with the rule settings to best match your own use cases.
+
+[b][size=4]Features[/size][/b]
+
+[list]
+[*][b]Event-driven[/b] - reacts to each file read in real time via fanotify, no polling or cron
+[*][b]Three-rule promotion[/b] - separate thresholds for small files and large files (streaming burst / periodic access)
+[*][b]Deferred promotion[/b] - waits until all open handles are closed, so readers never lose their file
+[*][b]Use Cache=No respected[/b] - shares configured with "Use Cache: No" are never promoted
+[*][b]Mover/rsync-aware[/b] - automatically pauses while Unraid's mover or rsync is running
+[*][b]Hot-tier fill guard[/b] - stops promoting when cache exceeds a configurable fill %
+[*][b]Dry-run mode[/b] - logs every decision without moving anything
+[*][b]Exclude patterns[/b] - skip any path substring
+[*][b]Rule toggles[/b] - each rule can be individually enabled/disabled
+[*][b]Pause / unpause[/b] - stackable pause locks via [font=monospace]rc.unspin pause <name>[/font]; useful for backup scripts over SSH
+[*][b]Live log viewer[/b] - auto-refreshing tail of the last 200 log lines in the settings page
+[/list]
+
+[b][size=4]Screenshots[/size][/b]
+
+[b]Settings page:[/b]
+[img]https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr1_settings.png[/img]
+
+[b]Live log viewer:[/b]
+[img]https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr2_log.png[/img]
+
+[b][size=4]Installation[/size][/b]
+
+[b](Hopefully coming soon) Via Community Applications (recommended):[/b]
+[list=1]
+[*]Install the Community Applications plugin
+[*]Search for [b]Unspin[/b]
+[*]Click Install
+[/list]
+
+[b]Manual:[/b]
+[code]plugin install https://raw.githubusercontent.com/kaedinger/unspin/main/unspin.plg[/code]
+
+[b][size=4]Pause for Backups[/size][/b]
+
+Wrap your backup jobs with pause/unpause over SSH so Unspin doesn't inflate counters while the backup tool reads your files:
+
+[code]ssh root@nas /etc/rc.d/rc.unspin pause borgbackup
+borg create ssh://root@nas/mnt/disk1/backups::daily /data
+ssh root@nas /etc/rc.d/rc.unspin unpause borgbackup[/code]
+
+Locks stack - multiple backup tools can pause independently without interfering with each other.
+
+[b][size=4]Requirements[/size][/b]
+
+[list]
+[*]Unraid 7.0+ (probably even earlier, but tested with 7.2.3 onwards)
+[*]No external dependencies - single C++ binary
+[/list]
+
+[b][size=4]Links[/size][/b]
+
+[list]
+[*][b]GitHub:[/b] [url]https://github.com/kaedinger/unspin[/url]
+[*][b]Issues / feature requests:[/b] [url]https://github.com/kaedinger/unspin/issues[/url]
+[*][b]License:[/b] GPLv2
+[/list]
+
+[b][size=4]AI disclaimer / History[/size][/b]
+
+Claude has been mainly used to simplify refactoring, restructuring, commenting & documenting, cleaning up etc. It also helped immensely setting up the general structure of an Unraid plugin and with getting the settings page right. BUT: Every functional code line has been human written at some point by meticulously reordering bits on an old hard drive using a VERY small magnet. Jokes aside, this one started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and wanted to give something back to its fantastic community, I turned it into this plugin.

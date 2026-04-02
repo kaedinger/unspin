@@ -21,6 +21,7 @@
 <CHANGES>
 ### next
 - display version number in the footer
+- final release preparations: screenshots, forum post, readme, license
 
 ### 2026.04.02.55974
 - fix: human_size used decimal (1e6) while parse_size used binary (1024) units — now both use binary
