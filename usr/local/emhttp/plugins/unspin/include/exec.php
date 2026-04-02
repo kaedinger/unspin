@@ -1,7 +1,7 @@
 <?php
-/* Unspin — POST action handler
+/* Unspin - POST action handler
  * Served at /plugins/unspin/include/exec.php
- * Called via jQuery $.post() from Unspin.php — bypasses dynamix page wrapper.
+ * Called via jQuery $.post() from Unspin.php - bypasses dynamix page wrapper.
  */
 
 $cfg_file  = "/boot/config/plugins/unspin/unspin.cfg";
@@ -26,7 +26,7 @@ function load_cfg($path) {
 }
 
 function save_cfg($path, $cfg) {
-    $header = "# Unspin Configuration — managed by UI\n# " . date('Y-m-d H:i:s') . "\n\n";
+    $header = "# Unspin Configuration - managed by UI\n# " . date('Y-m-d H:i:s') . "\n\n";
     $body = '';
     foreach ($cfg as $k => $v) {
         $body .= "$k=\"$v\"\n";
@@ -50,12 +50,12 @@ if ($action === 'save') {
     $defs  = load_cfg($defaults_file);
     $prev  = load_cfg($cfg_file);
     $p     = fn($k)           => $prev[$k] ?? $defs[$k] ?? '';
-    $yn    = fn($k)           => in_array($_POST[$k] ?? '', ['yes','no'])                                          ? $_POST[$k] : $p($k);
-    $enum  = fn($k, $vals)    => in_array($_POST[$k] ?? '', $vals)                                                 ? $_POST[$k] : $p($k);
-    $str   = fn($k)           => (($v = trim($_POST[$k] ?? '')) !== '')                                            ? $v         : $p($k);
-    $pint  = fn($k, $m = 1)   => isset($_POST[$k]) && ($v = intval($_POST[$k])) >= $m                             ? $v         : intval($p($k));
-    $range = fn($k, $lo, $hi) => isset($_POST[$k]) && ($v = intval($_POST[$k])) >= $lo && $v <= $hi               ? $v         : intval($p($k));
-    $size  = fn($k)           => preg_match('/^\d+(\.\d+)?\s*(KB|MB|GB|TB|K|M|G|T)?$/i', $v = trim($_POST[$k] ?? '')) ? $v    : $p($k);
+    $yn    = fn($k)           => in_array($_POST[$k] ?? '', ['yes','no'])                                             ? $_POST[$k] : $p($k);
+    $enum  = fn($k, $vals)    => in_array($_POST[$k] ?? '', $vals)                                                    ? $_POST[$k] : $p($k);
+    $str   = fn($k)           => (($v = trim($_POST[$k] ?? '')) !== '')                                               ? $v         : $p($k);
+    $pint  = fn($k, $m = 1)   => isset($_POST[$k]) && ($v = intval($_POST[$k])) >= $m                                 ? $v         : intval($p($k));
+    $range = fn($k, $lo, $hi) => isset($_POST[$k]) && ($v = intval($_POST[$k])) >= $lo && $v <= $hi                   ? $v         : intval($p($k));
+    $size  = fn($k)           => preg_match('/^\d+(\.\d+)?\s*(KB|MB|GB|TB|K|M|G|T)?$/i', $v = trim($_POST[$k] ?? '')) ? $v         : $p($k);
 
     $cfg = [];
     $k = 'SERVICE';                  $cfg[$k] = $enum($k, ['enabled','disabled']);

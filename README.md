@@ -2,6 +2,18 @@
 
 Automatically promotes your most-accessed files to faster storage using a lightweight C++ daemon that watches file reads in real time. The main goal is to have fewer disk spin-ups (hence the name), but we'll take the faster access, too ;-)
 
+<p align="center">
+  <img src="images/header.png" alt="Unspin banner" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/kaedinger/unspin/releases/latest"><img src="https://img.shields.io/github/v/release/kaedinger/unspin?style=flat-square" alt="Latest Release"></a>
+  <a href="https://github.com/kaedinger/unspin/releases"><img src="https://img.shields.io/github/release-date/kaedinger/unspin?style=flat-square" alt="Release Date"></a>
+  <a href="https://unraid.net/"><img src="https://img.shields.io/badge/Unraid-tested%20with%207.2.4-white?logo=unraid&logoColor=white&labelColor=orange" alt="Tested with Unraid 7.2.4"></a>
+  <a href="https://github.com/kaedinger/unspin/issues"><img src="https://img.shields.io/github/issues/kaedinger/unspin?style=flat-square" alt="Open Issues"></a>
+  <!-- <a href="https://forums.unraid.net/topic/197975-plugin-appdata-cleanup-plus/"><img src="https://img.shields.io/badge/Support-Unraid%20Forum-F15A2C?style=flat-square" alt="Support Thread"></a> -->
+</p>
+
 ---
 
 ## How It Works
@@ -14,7 +26,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 | **Large file - short window** | `reads ≥ N` within last `M` minutes | Streaming video (100 reads in 5 min) |
 | **Large file - long window** | `reads ≥ N` within last `H` hours | Frequently opened PDF (3 times in 24 h) |
 
-A file meets rules 2 or 3 if **either** window threshold is satisfied.
+A file meets rules 2 or 3 if either window threshold is satisfied.
 
 **Why these rules?** Based just on the developer's use cases: Under ideal circumstances we would cache everything - but we don't have the space, we only have 512 GB. Thus, we have to select: we can't have a huge Linux ISO using up precious space if it's just held open for a few bytes of bittorrent upload. But of course that changes if it is being constantly read, or on a regular basis. A song played only once does not need to be promoted, but if we play it every day, it should be. You'll have to play around with the rule settings to best match your own use cases.
 
@@ -24,9 +36,9 @@ Promotion is not triggered the moment a threshold is reached if the file is stil
 
 | File size | Open handles | What happens |
 |---|---|---|
-| **Small** (≤ threshold) | any open handle | Deferred until all handles are closed - prevents save failures in editors that keep files open while writing |
-| **Large** (> threshold) | read-only opens | Promoted immediately, even while being read - the reader's existing fd stays valid on the old inode so playback continues uninterrupted; there is no live switching unfortunately (shfs fiddling while at the core monitoring **disk** access is - so far - really error prone). The next open picks up the cache copy |
-| **Large** (> threshold) | write confirmed (FAN_MODIFY seen) | Deferred until all handles are closed |
+| **Small** | any open handle | Deferred until all handles are closed - prevents save failures in editors that keep files open while writing |
+| **Large** | read-only opens | Promoted immediately, even while being read - the reader's existing fd stays valid on the old inode so playback continues uninterrupted; there is no live switching unfortunately (shfs fiddling while at the core monitoring **disk** access is - so far - really error prone). The next open picks up the cache copy |
+| **Large** | write confirmed (FAN_MODIFY seen) | Deferred until all handles are closed |
 
 Cold demotion is handled by Unraid's built-in mover (cache → array direction).
 
@@ -100,7 +112,7 @@ unspin/
 | `LARGE_SHORT_WINDOW_MINS` | `5` | Duration of the short window (minutes) |
 | `LARGE_LONG_MIN_ACCESSES` | `3` | Opens required within the long window |
 | `LARGE_LONG_WINDOW_HOURS` | `24` | Duration of the long window (hours) |
-| `EXCLUDE_PATTERNS` | `/.recycle,/.Recycle.Bin,/tmp` | Comma-separated path substrings to skip |
+| `EXCLUDE_PATTERNS` | `/nevercachethis,/orthis` | Comma-separated path substrings to skip |
 | `RULE1_ENABLED` | `yes` | Enable small-file rule |
 | `RULE1_FALLTHROUGH` | `no` | Also evaluate large-file rules for small files when rule 1 is off or unmet |
 | `RULE2_ENABLED` | `yes` | Enable large-file short-window rule |
@@ -187,6 +199,6 @@ If the copy fails, the source is left untouched and the partial destination is d
 
 MIT License. Contributions welcome - open an issue or PR on GitHub.
 
-## AI slop included?
+## AI slop included? / History
 
-Claude has been used simplify refactoring, restructuring, commenting & documenting, cleaning up etc. Every functional code line has been human written by meticulously reordering bits on an old hard drive using a VERY small magnet.
+Claude has been mainly used to simplify refactoring, restructuring, commenting & documenting, cleaning up etc. It wrote the first version of this Readme. It also helped immensely setting up the general structure of an Unraid plugin and with getting the settings page right. BUT: Every functional code line has been human written at some point by meticulously reordering bits on an old hard drive using a VERY small magnet. Jokes aside, this one started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and thought it be useful myself, I turned it into this plugin.

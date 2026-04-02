@@ -308,7 +308,7 @@ static void load_config() {
         {"RULE3_ENABLED",            "yes"},
         {"RULE3_MIN_READS",          "6"},
         {"PAUSE_ON_RSYNC",           "yes"},
-        {"EXCLUDE_PATTERNS",         "/.recycle,/.Recycle.Bin,/tmp"},
+        {"EXCLUDE_PATTERNS",         "/nevercachethis,/orthis"},
         {"LOG_FILE",                 "/var/log/unspin.log"},
         {"LOG_MAX_LINES",            "3000"},
     };
@@ -329,7 +329,7 @@ static void load_config() {
         _cfg.scan_paths.clear();
         for (const auto& sp : raw_scans) {
             if (sp.rfind("/mnt/user", 0) == 0) {
-                log_warn("Ignoring scan path '" + sp + "': /mnt/user is the shfs union mount - "
+                log_warn("Ignoring scan path '" + sp + "': /mnt/user is the share mount - "
                          "use array disk mount points (e.g. /mnt/disk1) instead");
             } else {
                 _cfg.scan_paths.push_back(sp);
@@ -671,7 +671,7 @@ static void handle_event(const std::string& path, EvType ev) {
     auto do_promote = [&](const PromoteDecision& dec) {
         if (rec.promoted) return;
         if (transfers_running()) {
-            log_info("[" + dec.rule + "] Mover/rsync active, deferring: " + path);
+            log_info("[" + dec.rule + "] Mover or rsync active, deferring: " + path);
             return;
         }
         auto fill = disk_fill_percent(_cfg.hot_path);

@@ -37,7 +37,7 @@ RULE3_MIN_READS="6"
 PAUSE_ON_RSYNC="yes"
 
 # Comma-separated partial path patterns to exclude from tiering
-EXCLUDE_PATTERNS="/nevercache"
+EXCLUDE_PATTERNS="/nevercachethis"
 
 # Dry run: log promotion decisions without moving any files (yes/no)
 DRY_RUN="yes"

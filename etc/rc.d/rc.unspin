@@ -1,5 +1,5 @@
 #!/bin/bash
-# rc.unspin — Unspin daemon service controller
+# rc.unspin - Unspin daemon service controller
 # Usage: /etc/rc.d/rc.unspin {start|stop|restart|status|pause|unpause|toggle} <name>
 
 DAEMON=/usr/local/sbin/unspind
@@ -93,7 +93,7 @@ unspin_pause() {
     touch "$PAUSE_DIR/$1"
     local n
     n=$(pause_count)
-    log_info "Pause lock added — $1 ($n lock(s) held)"
+    log_info "Pause lock added - $1 ($n lock(s) held)"
     if [ "$n" -eq 1 ]; then
         kill -USR1 "$(cat "$PID_FILE")"
     fi
@@ -113,7 +113,7 @@ unspin_unpause() {
     rm -f "$PAUSE_DIR/$1"
     local n
     n=$(pause_count)
-    log_info "Pause lock released — $1 ($n lock(s) remaining)"
+    log_info "Pause lock released - $1 ($n lock(s) remaining)"
     if [ "$n" -eq 0 ]; then
         kill -USR2 "$(cat "$PID_FILE")"
         echo "unspind unpaused (last lock '$1' released)."
@@ -128,7 +128,7 @@ unspin_toggle() {
         return 1
     fi
     if [ "$(pause_count)" -gt 0 ]; then
-        log_info "Toggle — clearing all pause locks"
+        log_info "Toggle - clearing all pause locks"
         rm -rf "$PAUSE_DIR"
         kill -USR2 "$(cat "$PID_FILE")"
         echo "unspind unpaused (all locks cleared)."
@@ -136,7 +136,7 @@ unspin_toggle() {
         validate_name "$1" "toggle" || return 1
         mkdir -p "$PAUSE_DIR"
         touch "$PAUSE_DIR/$1"
-        log_info "Toggle — pause lock added: $1"
+        log_info "Toggle - pause lock added: $1"
         kill -USR1 "$(cat "$PID_FILE")"
         echo "unspind paused by '$1'."
     fi
