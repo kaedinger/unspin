@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "Unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.04.01.59747">
+  <!ENTITY version   "2026.04.02.46831">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,7 +19,7 @@
 >
 
 <CHANGES>
-### next
+### 2026.04.02.46831
 - process external transfer detection (rsync/mover) outside of monitored events
 - cosmetics and update Claude generated documentation, comments, and logs
 - fix: saving settings while paused no longer unpauses the daemon (SIGHUP reload instead of restart)
