@@ -22,6 +22,7 @@
 ### next
 - process external transfer detection (rsync/mover) outside of monitored events
 - cosmetics and update Claude generated documentation, comments, and logs
+- fix: saving settings while paused no longer unpauses the daemon (SIGHUP reload instead of restart)
 
 ### 2026.04.01.59747
 - Initial release - reworked from the now-deprecated Hotfile project

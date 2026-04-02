@@ -90,7 +90,12 @@ if ($action === 'save') {
 
     if (file_exists($rc_script)) {
         if ($cfg['SERVICE'] === 'enabled') {
-            exec("$rc_script restart < /dev/null > /dev/null 2>&1 &");
+            if (daemon_running($pid_file)) {
+                $pid = (int)trim(file_get_contents($pid_file));
+                posix_kill($pid, SIGHUP); // reload config
+            } else {
+                exec("$rc_script start < /dev/null > /dev/null 2>&1 &");
+            }
         } else {
             exec("$rc_script stop < /dev/null > /dev/null 2>&1 &");
         }
