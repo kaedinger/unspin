@@ -43,6 +43,14 @@ $defaults = load_cfg($defaults_file);
 $cfg      = load_cfg($cfg_file);
 $c        = [...$defaults, ...$cfg];
 
+$plg_file = '/boot/config/plugins/unspin.plg';
+$version  = 'unknown';
+if (file_exists($plg_file)) {
+    $plg = file_get_contents($plg_file);
+    if (preg_match('/<!ENTITY\s+version\s+"([^"]+)"/', $plg, $m))
+        $version = $m[1];
+}
+
 $is_running = daemon_running($pid_file);
 $pause_dir  = '/var/run/unspind.pause.d';
 $pause_locks = [];
@@ -132,6 +140,10 @@ dt.hf-rule-label {
   margin-top: 12px;
   font-size: 0.85em;
   transition: opacity 0.2s;
+}
+.hf-footer-version {
+  margin-left: auto;
+  opacity: 0.5;
 }
 .hf-footer:hover { opacity: 1; }
 .hf-footer-avatar {
@@ -380,6 +392,7 @@ dt.hf-rule-label {
   <span class="hf-footer-soon" title="Support forum - coming soon">Sponsor ♥ - THANK YOU</a></span>
   <span class="hf-footer-sep">·</span>
   <a href="https://www.paypal.com/donate/?hosted_button_id=ASP53VDRXMDYE" target="_blank" rel="noopener">Donate ♥ - THANK YOU</a></span>
+  <span class="hf-footer-version">Unspin<?= " v{$version}" ?></span>
 </div>
 
 <script>
