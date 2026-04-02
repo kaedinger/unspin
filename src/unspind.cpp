@@ -622,11 +622,7 @@ static void handle_event(const std::string& path, EvType ev) {
         return;
     }
 
-    // Manually paused - skip event counting
-    if (_paused) return;
-
-    // Mover/rsync is running - skip all event counting to avoid inflating counters
-    if (transfers_active()) return;
+    auto skip_counting = _paused || transfers_active();
 
     struct stat st;
     if (lstat(path.c_str(), &st) != 0) {
@@ -721,6 +717,7 @@ static void handle_event(const std::string& path, EvType ev) {
     };
 
     if (ev == EvType::Read) {
+        if (skip_counting) return;
         rec.total_reads++;
         rec.read_timestamps.push_back(now);
         if (rec.open_reads >= 0) rec.open_reads++;
@@ -731,6 +728,7 @@ static void handle_event(const std::string& path, EvType ev) {
 
     } else if (ev == EvType::Open) {
         rec.open_count++;
+        if (skip_counting) return;
         rec.open_reads = 0;
         if (_cfg.rule3_min_reads == 0) {
             // Filter disabled - count immediately
@@ -748,6 +746,11 @@ static void handle_event(const std::string& path, EvType ev) {
         if (rec.open_count > 0) rec.open_count--;
         // Clear if done.
         if (rec.open_count == 0) rec.has_write_open = false;
+
+        if (skip_counting) {
+            rec.open_reads = -1;
+            return;
+        }
 
         if (ev == EvType::CloseNoWrite) {
             // Rule 3 "thumbnail" filter: evaluate the completed read-only open session.
