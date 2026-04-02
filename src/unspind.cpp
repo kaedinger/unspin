@@ -363,6 +363,39 @@ static void load_config() {
     load_share_cache_settings();
 }
 
+static void log_config() {
+    log_info("Config: " + _cfg_file);
+    log_info("Hot path: " + _cfg.hot_path);
+    for (const auto& sp : _cfg.scan_paths)
+        log_info("Scan path: " + sp);
+    log_info("Max hot fill: " + std::to_string((int)_cfg.max_hot_fill_percent) + "%");
+    {
+        std::string excl;
+        for (const auto& p : _cfg.exclude_patterns) {
+            if (!excl.empty()) excl += ", ";
+            excl += p;
+        }
+        log_info("Exclude: " + (excl.empty() ? std::string("(none)") : excl));
+    }
+    log_info((_cfg.rule1_enabled ? "" : "DISABLED: ") +
+             std::string("Small file threshold: ") + human_size(_cfg.small_file_threshold) +
+             ", min reads: " + std::to_string(_cfg.small_min_accesses) +
+             (!_cfg.rule1_enabled ? (_cfg.rule1_fallthrough ? " (fallthrough on)" : " (fallthrough off)") : ""));
+    log_info((_cfg.rule2_enabled ? "" : "DISABLED: ") +
+             std::string("Large short window: ") + std::to_string(_cfg.large_short_min_accesses) +
+             " reads / " + std::to_string(_cfg.large_short_window_mins) + " min");
+    log_info((_cfg.rule3_enabled ? "" : "DISABLED: ") +
+             std::string("Large long window:  ") + std::to_string(_cfg.large_long_min_accesses) +
+             " opens / " + std::to_string(_cfg.large_long_window_hours) + " h, min reads filter: " +
+             (_cfg.rule3_min_reads == 0 ? std::string("off") : std::to_string(_cfg.rule3_min_reads)));
+    if (_cfg.dry_run) log_info("DRY RUN mode - no files will be moved");
+    if (!_no_cache_shares.empty()) {
+        std::string s;
+        for (const auto& sh : _no_cache_shares) { if (!s.empty()) s += ", "; s += sh; }
+        log_info("Shares with Use Cache=No (skipping): " + s);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Disk utilities
 // ---------------------------------------------------------------------------
@@ -933,36 +966,7 @@ int main(int argc, char* argv[]) {
     signal(SIGRTMIN, sig_handler);
 
     log_info("=== unspind starting ===");
-    log_info("Config: " + _cfg_file);
-    log_info("Hot path: " + _cfg.hot_path);
-    for (const auto& sp : _cfg.scan_paths)
-        log_info("Scan path: " + sp);
-    log_info("Max hot fill: " + std::to_string((int)_cfg.max_hot_fill_percent) + "%");
-    {
-        std::string excl;
-        for (const auto& p : _cfg.exclude_patterns) {
-            if (!excl.empty()) excl += ", ";
-            excl += p;
-        }
-        log_info("Exclude: " + (excl.empty() ? std::string("(none)") : excl));
-    }
-    log_info((_cfg.rule1_enabled ? "" : "DISABLED: ") +
-             std::string("Small file threshold: ") + human_size(_cfg.small_file_threshold) +
-             ", min reads: " + std::to_string(_cfg.small_min_accesses) +
-             (!_cfg.rule1_enabled ? (_cfg.rule1_fallthrough ? " (fallthrough on)" : " (fallthrough off)") : ""));
-    log_info((_cfg.rule2_enabled ? "" : "DISABLED: ") +
-             std::string("Large short window: ") + std::to_string(_cfg.large_short_min_accesses) +
-             " reads / " + std::to_string(_cfg.large_short_window_mins) + " min");
-    log_info((_cfg.rule3_enabled ? "" : "DISABLED: ") +
-             std::string("Large long window:  ") + std::to_string(_cfg.large_long_min_accesses) +
-             " opens / " + std::to_string(_cfg.large_long_window_hours) + " h, min reads filter: " +
-             (_cfg.rule3_min_reads == 0 ? std::string("off") : std::to_string(_cfg.rule3_min_reads)));
-    if (_cfg.dry_run) log_info("DRY RUN mode - no files will be moved");
-    if (!_no_cache_shares.empty()) {
-        std::string s;
-        for (const auto& sh : _no_cache_shares) { if (!s.empty()) s += ", "; s += sh; }
-        log_info("Shares with Use Cache=No (skipping): " + s);
-    }
+    log_config();
 
     int fan_fd = init_fanotify();
     if (fan_fd < 0) {
@@ -991,6 +995,7 @@ int main(int argc, char* argv[]) {
             if (override_dry_run) _cfg.dry_run = true;
             if (override_debug)   _cfg.debug   = true;
             _log_stream.open(_cfg.log_file, std::ios::app);
+            log_config();
             fan_fd = init_fanotify();
             if (fan_fd < 0) {
                 log_err("fanotify re-init failed. Exiting.");
