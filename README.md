@@ -11,7 +11,7 @@ Automatically promotes your most-accessed files to faster storage using a lightw
   <a href="https://github.com/kaedinger/unspin/releases"><img src="https://img.shields.io/github/release-date/kaedinger/unspin?style=flat-square" alt="Release Date"></a>
   <a href="https://unraid.net/"><img src="https://img.shields.io/badge/Unraid-tested%20with%207.2.4-white?logo=unraid&logoColor=white&labelColor=orange" alt="Tested with Unraid 7.2.4"></a>
   <a href="https://github.com/kaedinger/unspin/issues"><img src="https://img.shields.io/github/issues/kaedinger/unspin?style=flat-square" alt="Open Issues"></a>
-  <!-- <a href="https://forums.unraid.net/topic/197975-plugin-appdata-cleanup-plus/"><img src="https://img.shields.io/badge/Support-Unraid%20Forum-F15A2C?style=flat-square" alt="Support Thread"></a> -->
+  <a href="https://forums.unraid.net/topic/198091-plugin-unspin-rudimentary-hot-file-tiering-for-unraid/"><img src="https://img.shields.io/badge/Support-Unraid%20Forum-F15A2C?style=flat-square" alt="Support Thread"></a>
 </p>
 
 ---

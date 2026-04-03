@@ -387,7 +387,7 @@ dt.hf-rule-label {
   <span class="hf-footer-sep">·</span>
   <a href="https://github.com/kaedinger/unspin" target="_blank" rel="noopener">GitHub</a>
   <span class="hf-footer-sep">·</span>
-  <span class="hf-footer-soon" title="Support forum - coming soon">Forum</span>
+  <a href="https://forums.unraid.net/topic/198091-plugin-unspin-rudimentary-hot-file-tiering-for-unraid/" target="_blank" rel="noopener">Forum</a>
   <span class="hf-footer-sep">·</span>
   <span class="hf-footer-soon" title="Support forum - coming soon">Sponsor ♥ - THANK YOU</a></span>
   <span class="hf-footer-sep">·</span>

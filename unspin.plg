@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "Unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.04.02.83096">
+  <!ENTITY version   "2026.04.03.44482">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### 2026.04.03.44482
+- add support forum URL to CA template, settings page footer, and README badge
+
 ### 2026.04.02.83096
 - display version number in the footer
 - final release preparations: screenshots, forum post, readme, license
