@@ -60,6 +60,7 @@ if (is_dir($pause_dir)) {
     }
 }
 $is_paused = count($pause_locks) > 0;
+$pause_label = $is_paused ? ' (Paused: ' . htmlspecialchars(implode(', ', $pause_locks)) . ')' : '';
 
 $log_lines = '';
 if (file_exists($log_file)) {
@@ -175,7 +176,7 @@ dt.hf-rule-label {
   <dt>Daemon Status</dt>
   <dd>
     <strong id="hf-status" style="<?= $is_running ? ($is_paused ? 'color:#facc15' : 'color:#4ade80') : 'color:#f87171' ?>">
-      <?= $is_running ? ($is_paused ? 'Running (Paused)' : 'Running') : 'Stopped' ?>
+      <?= $is_running ? ('Running' . $pause_label) : 'Stopped' ?>
     </strong>
     &nbsp;&nbsp;
     <button type="button" id="hf-toggle-btn" onclick="hfDaemonToggle()">
@@ -385,13 +386,13 @@ dt.hf-rule-label {
   <img src="https://github.com/kaedinger.png" alt="kaedinger" class="hf-footer-avatar">
   <a href="https://kaedinger.de" target="_blank" rel="noopener">kaedinger</a>
   <span class="hf-footer-sep">·</span>
-  <a href="https://github.com/kaedinger/unspin" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/kaedinger/unspin" target="_blank" rel="noopener">GitHub / Issues</a>
   <span class="hf-footer-sep">·</span>
-  <a href="https://forums.unraid.net/topic/198091-plugin-unspin-rudimentary-hot-file-tiering-for-unraid/" target="_blank" rel="noopener">Forum</a>
+  <a href="https://forums.unraid.net/topic/198091-plugin-unspin-rudimentary-hot-file-tiering-for-unraid/" target="_blank" rel="noopener">Support forum</a>
   <span class="hf-footer-sep">·</span>
-  <span class="hf-footer-soon" title="Support forum - coming soon">Sponsor ♥ - THANK YOU</a></span>
+  <span class="hf-footer-soon" title="GitHub Sponsors - coming soon">Sponsor ♥ - THANK YOU</span>
   <span class="hf-footer-sep">·</span>
-  <a href="https://www.paypal.com/donate/?hosted_button_id=ASP53VDRXMDYE" target="_blank" rel="noopener">Donate ♥ - THANK YOU</a></span>
+  <a href="https://www.paypal.com/donate/?hosted_button_id=ASP53VDRXMDYE" target="_blank" rel="noopener">Donate ♥ - THANK YOU</a>
   <span class="hf-footer-version">Unspin<?= " v{$version}" ?></span>
 </div>
 
@@ -424,7 +425,7 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
 
   // Re-enables toggle button and updates status label.
   // Called on every poll so the button always recovers after a busy state.
-  function updateStatus(running, paused) {
+  function updateStatus(running, paused, pauseLocks) {
     var el  = document.getElementById('hf-status');
     var btn = document.getElementById('hf-toggle-btn');
     if (el) {
@@ -432,7 +433,8 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
         el.textContent = 'Stopped';
         el.style.color = '#f87171';
       } else if (paused) {
-        el.textContent = 'Running (Paused)';
+        var reasons = (pauseLocks && pauseLocks.length) ? pauseLocks.join(', ') : '';
+        el.textContent = reasons ? 'Running (Paused: ' + reasons + ')' : 'Running (Paused)';
         el.style.color = '#facc15';
       } else {
         el.textContent = 'Running';
@@ -488,7 +490,7 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
       // Delayed poll to re-enable toggle button once daemon has restarted/stopped
       setTimeout(function () {
         hfPost({ action: 'poll' }, function (pr) {
-          updateStatus(pr.running, pr.paused);
+          updateStatus(pr.running, pr.paused, pr.pause_locks);
           updateLog(pr.log);
         });
       }, 3000);
@@ -503,7 +505,7 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
       showMsg(r.message, r.ok);
       setTimeout(function () {
         hfPost({ action: 'poll' }, function (pr) {
-          updateStatus(pr.running, pr.paused);
+          updateStatus(pr.running, pr.paused, pr.pause_locks);
           updateLog(pr.log);
         });
       }, 3000);
@@ -542,7 +544,7 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
 
   setInterval(function () {
     hfPost({ action: 'poll' }, function (r) {
-      updateStatus(r.running, r.paused);
+      updateStatus(r.running, r.paused, r.pause_locks);
       updateLog(r.log);
     });
   }, 10000);
