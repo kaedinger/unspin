@@ -931,6 +931,10 @@ static void process_events(int fan_fd) {
 // ---------------------------------------------------------------------------
 
 int main(int argc, char* argv[]) {
+    // Honor explicit modes on mkdir/open without inherited-umask masking;
+    // directory creation relies on this to produce 0777 rather than 0755.
+    umask(0);
+
     auto override_dry_run = false;
     auto override_debug   = false;
 
