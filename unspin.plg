@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "Unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.04.03.44482">
+  <!ENTITY version   "2026.04.23.50591">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,10 +19,10 @@
 >
 
 <CHANGES>
-### next
+### 2026.04.23.50591
 - fix: hot-path directories created during promotion ended up 0755 instead of 0777 because the daemon inherited the init script's umask; daemon now clears umask at startup so explicit modes on mkdir/open are honored
 - ui: paused status now shows the pause reason (e.g. "Running (Paused: mover, rsync)") instead of just "Running (Paused)"
-- ui: footer label renames; fix stray </a> and stale tooltip
+- ui: footer label renames; fix stray closing tag and stale tooltip
 
 ### 2026.04.03.44482
 - add support forum URL to CA template, settings page footer, and README badge
