@@ -16,3 +16,6 @@ usr/local/sbin/unspind
 *~
 .vscode/
 .idea/
+
+# Local dev helpers (not distributed)
+scripts/
