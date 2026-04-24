@@ -34,6 +34,37 @@ function save_cfg($path, $cfg) {
     file_put_contents($path, "{$header}{$body}");
 }
 
+// Parse /boot/config/shares/*.cfg into ['share' => ['use_cache'=>..,'cache_pool'=>..]].
+function load_shares() {
+    $out = [];
+    $dir = '/boot/config/shares';
+    if (!is_dir($dir)) return $out;
+    foreach (glob("$dir/*.cfg") as $path) {
+        $share = basename($path, '.cfg');
+        $info  = ['use_cache' => '', 'cache_pool' => ''];
+        foreach (load_cfg($path) as $k => $v) {
+            if      ($k === 'shareUseCache')  $info['use_cache']  = $v;
+            else if ($k === 'shareCachePool') $info['cache_pool'] = $v;
+        }
+        $out[$share] = $info;
+    }
+    ksort($out);
+    return $out;
+}
+
+// Which pools are referenced by yes/prefer shares that aren't excluded by the user.
+function detect_promotable_pools($shares, $excluded_set) {
+    $pools = [];
+    foreach ($shares as $name => $info) {
+        if (isset($excluded_set[$name])) continue;
+        if ($info['use_cache'] !== 'yes' && $info['use_cache'] !== 'prefer') continue;
+        if ($info['cache_pool'] === '') continue;
+        $pools[$info['cache_pool']] = true;
+    }
+    ksort($pools);
+    return array_keys($pools);
+}
+
 function daemon_running($pid_file) {
     if (!file_exists($pid_file)) return false;
     $pid = (int)trim(file_get_contents($pid_file));
@@ -59,7 +90,6 @@ if ($action === 'save') {
 
     $cfg = [];
     $k = 'SERVICE';                  $cfg[$k] = $enum($k, ['enabled','disabled']);
-    $k = 'HOT_PATH';                 $cfg[$k] = $str($k);
     $k = 'SCAN_PATHS';               $cfg[$k] = $str($k);
     foreach (array_map('trim', explode(',', $cfg['SCAN_PATHS'])) as $sp) {
         if ($sp !== '' && strncmp($sp, '/mnt/user', 9) === 0) {
@@ -69,7 +99,34 @@ if ($action === 'save') {
             exit;
         }
     }
-    $k = 'MAX_HOT_FILL_PERCENT';     $cfg[$k] = $range($k, 10, 99);
+
+    // Excluded shares: posted as SHARE_EXCLUDE_<name>=1|0 checkboxes.
+    $shares      = load_shares();
+    $excluded    = [];
+    foreach ($shares as $sname => $info) {
+        if ($info['use_cache'] !== 'yes' && $info['use_cache'] !== 'prefer') continue;
+        $post_key = 'SHARE_EXCLUDE_' . $sname;
+        // Checkbox unticked = excluded. Posted "1" means "treated" (checked).
+        $treated = ($_POST[$post_key] ?? '') === '1';
+        if (!$treated) $excluded[] = $sname;
+    }
+    sort($excluded);
+    $cfg['EXCLUDED_SHARES'] = implode(',', $excluded);
+    $excluded_set = array_flip($excluded);
+
+    // Per-pool fill thresholds. Only write entries for currently-detected promotable pools.
+    // Migration: if the old config had MAX_HOT_FILL_PERCENT, seed any pool input that
+    // wasn't posted with that value; otherwise fall back to 80.
+    $legacy = $prev['MAX_HOT_FILL_PERCENT'] ?? '';
+    $legacy = ($legacy !== '' && is_numeric($legacy)) ? intval($legacy) : 80;
+    foreach (detect_promotable_pools($shares, $excluded_set) as $pool) {
+        $pk  = 'MAX_FILL_PERCENT_' . $pool;
+        $raw = $_POST[$pk] ?? '';
+        $val = is_numeric($raw) ? intval($raw) : $legacy;
+        if ($val < 10) $val = 10;
+        if ($val > 99) $val = 99;
+        $cfg[$pk] = $val;
+    }
     $k = 'SMALL_FILE_THRESHOLD';     $cfg[$k] = $size($k);
     $k = 'SMALL_MIN_ACCESSES';       $cfg[$k] = $pint($k);
     $k = 'LARGE_SHORT_MIN_ACCESSES'; $cfg[$k] = $pint($k);

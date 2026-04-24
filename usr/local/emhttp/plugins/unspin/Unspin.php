@@ -38,6 +38,29 @@ function opt($val, $current, $label) {
     return "<option value=\"" . htmlspecialchars($val) . "\"$sel>" . htmlspecialchars($label) . "</option>";
 }
 
+// Parse /boot/config/shares/*.cfg -> ['share' => ['use_cache'=>..,'cache_pool'=>..]].
+// Mirrors load_shares() in exec.php; duplicated to keep the page render self-contained.
+function unspin_load_shares() {
+    $out = [];
+    $dir = '/boot/config/shares';
+    if (!is_dir($dir)) return $out;
+    foreach (glob("$dir/*.cfg") as $path) {
+        $share = basename($path, '.cfg');
+        $info  = ['use_cache' => '', 'cache_pool' => ''];
+        foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) continue;
+            [$k, $v] = explode('=', $line, 2);
+            $k = trim($k); $v = trim($v, " \t\"'");
+            if      ($k === 'shareUseCache')  $info['use_cache']  = $v;
+            else if ($k === 'shareCachePool') $info['cache_pool'] = $v;
+        }
+        $out[$share] = $info;
+    }
+    ksort($out);
+    return $out;
+}
+
 $defaults_file = "/usr/local/emhttp/plugins/unspin/unspin.cfg.default";
 $defaults = load_cfg($defaults_file);
 $cfg      = load_cfg($cfg_file);
@@ -66,6 +89,26 @@ $log_lines = '';
 if (file_exists($log_file)) {
     $log_lines = htmlspecialchars(implode('', array_slice(file($log_file), -200)));
 }
+
+// Detected shares + excluded set for the Detected Shares table.
+$shares         = unspin_load_shares();
+$excluded_csv   = $c['EXCLUDED_SHARES'] ?? '';
+$excluded_set   = array_flip(array_filter(array_map('trim', explode(',', $excluded_csv))));
+
+// Pools currently referenced by promotable (yes/prefer, not excluded) shares.
+$detected_pools = [];
+foreach ($shares as $sname => $info) {
+    if (isset($excluded_set[$sname])) continue;
+    if ($info['use_cache'] !== 'yes' && $info['use_cache'] !== 'prefer') continue;
+    if ($info['cache_pool'] === '') continue;
+    $detected_pools[$info['cache_pool']] = true;
+}
+ksort($detected_pools);
+$detected_pools = array_keys($detected_pools);
+
+// Legacy migration seed for fill % inputs.
+$legacy_fill = $c['MAX_HOT_FILL_PERCENT'] ?? '';
+$legacy_fill = is_numeric($legacy_fill) ? intval($legacy_fill) : 80;
 ?>
 
 <style>
@@ -227,15 +270,6 @@ dt.hf-rule-label {
 <hr>
 
 <dl>
-  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Hot Tier Path</dt>
-  <dd>
-    <div class="hf-row">
-      <input type="text" id="hf_HOT_PATH" name="HOT_PATH" value="<?= htmlspecialchars($c['HOT_PATH']) ?>">
-      <span class="hf-reset" onclick="hfReset('HOT_PATH')" title="Reset to default">&#x21ba;</span>
-    </div>
-    <div class="hf-help">Fast storage to promote hot files to, e.g. <code>/mnt/cache</code> or <code>/mnt/nvme</code>. Cold demotion is handled by Unraid's mover.</div>
-  </dd>
-
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Scan Paths</dt>
   <dd>
     <div class="hf-row">
@@ -246,18 +280,85 @@ dt.hf-rule-label {
     <div class="hf-help">Comma-separated <strong>array disk</strong> mount points to watch, e.g. <code>/mnt/disk1,/mnt/disk2,/mnt/disk3</code>. Use disk paths, not shares!</div>
   </dd>
 
-  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Max Hot Tier Fill %</dt>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Detected Shares</dt>
   <dd>
-    <input type="number" id="hf_MAX_HOT_FILL_PERCENT" name="MAX_HOT_FILL_PERCENT" min="10" max="99"
-      value="<?= htmlspecialchars($c['MAX_HOT_FILL_PERCENT']) ?>">
-    <div class="hf-help">Stop promoting files once the hot tier exceeds this percentage full.</div>
+    <table class="hf-shares" style="border-collapse:collapse;margin-bottom:4px;">
+      <thead>
+        <tr style="text-align:left;">
+          <th style="padding:2px 8px 2px 0;">Treat</th>
+          <th style="padding:2px 8px;">Share</th>
+          <th style="padding:2px 8px;">Use Cache</th>
+          <th style="padding:2px 8px;">Pool</th>
+          <th style="padding:2px 8px;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php if (empty($shares)): ?>
+        <tr><td colspan="5" style="padding:4px 0;opacity:0.6;">No shares found in <code>/boot/config/shares</code>.</td></tr>
+      <?php else: foreach ($shares as $sname => $info):
+        $uc    = $info['use_cache'] ?: '-';
+        $pool  = $info['cache_pool'] ?: '-';
+        $promo = ($info['use_cache'] === 'yes' || $info['use_cache'] === 'prefer') && $info['cache_pool'] !== '';
+        $skip  = '';
+        if (!$promo) {
+            if ($info['use_cache'] === '')              $skip = 'no use_cache set';
+            else if ($info['use_cache'] === 'no')       $skip = 'cache disabled';
+            else if ($info['use_cache'] === 'only')     $skip = 'cache-only, not on array';
+            else if ($info['cache_pool'] === '')        $skip = 'no cache pool set';
+            else                                        $skip = 'not promotable';
+        }
+        $ticked = $promo && !isset($excluded_set[$sname]);
+        $status = !$promo ? ('<span style="opacity:0.6;">skipped: ' . htmlspecialchars($skip) . '</span>')
+                          : ($ticked ? '<span style="color:#4ade80;">promotable</span>'
+                                     : '<span style="color:#facc15;">excluded by user</span>');
+      ?>
+        <tr>
+          <td style="padding:2px 8px 2px 0;">
+            <?php if ($promo): ?>
+              <input type="hidden" name="SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>" value="0">
+              <input type="checkbox" class="hf-share-cb"
+                     id="hf_SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>"
+                     name="SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>" value="1"
+                     <?= $ticked ? 'checked' : '' ?>>
+            <?php else: ?>
+              <input type="checkbox" disabled>
+            <?php endif; ?>
+          </td>
+          <td style="padding:2px 8px;"><code><?= htmlspecialchars($sname) ?></code></td>
+          <td style="padding:2px 8px;"><?= htmlspecialchars($uc) ?></td>
+          <td style="padding:2px 8px;"><?= htmlspecialchars($pool) ?></td>
+          <td style="padding:2px 8px;"><?= $status ?></td>
+        </tr>
+      <?php endforeach; endif; ?>
+      </tbody>
+    </table>
+    <div class="hf-help">Untick a share to prevent Unspin from promoting its files, even when <code>shareUseCache</code> is <code>yes</code> or <code>prefer</code>. Shares with <code>no</code> or <code>only</code> are always skipped and cannot be toggled.</div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Fill Limits</dt>
+  <dd>
+  <?php if (empty($detected_pools)): ?>
+    <div style="opacity:0.6;">No promotable pools detected - enable at least one share above.</div>
+  <?php else: foreach ($detected_pools as $pool):
+      $key    = 'MAX_FILL_PERCENT_' . $pool;
+      $val    = isset($c[$key]) && is_numeric($c[$key]) ? intval($c[$key]) : $legacy_fill;
+  ?>
+    <div class="hf-row" style="margin-bottom:4px;">
+      <code style="min-width:12em;">/mnt/<?= htmlspecialchars($pool) ?></code>
+      <input type="number" id="hf_<?= htmlspecialchars($key) ?>" name="<?= htmlspecialchars($key) ?>"
+             min="10" max="99" value="<?= $val ?>" style="width:6em"
+             data-hf-pool="1">
+      <span>% full - stop promoting</span>
+    </div>
+  <?php endforeach; endif; ?>
+    <div class="hf-help">Stop promoting to a pool once its fill exceeds this percentage. One value per detected pool. Default <strong>80%</strong>.</div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Exclude Patterns</dt>
   <dd>
     <input type="text" id="hf_EXCLUDE_PATTERNS" name="EXCLUDE_PATTERNS"
       value="<?= htmlspecialchars($c['EXCLUDE_PATTERNS']) ?>">
-    <div class="hf-help">Comma-separated partial path strings to skip, e.g. <code>/pagefile,/qbittorrent</code>.</div>
+    <div class="hf-help">Comma-separated partial path strings to skip, e.g. <code>/pagefile,/qbittorrent</code>. Orthogonal to the Detected Shares table.</div>
   </dd>
 </dl>
 
@@ -459,7 +560,7 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
     if (atBottom) lb.scrollTop = lb.scrollHeight;
   }
 
-  var fields = ['SERVICE','HOT_PATH','SCAN_PATHS','MAX_HOT_FILL_PERCENT',
+  var fields = ['SERVICE','SCAN_PATHS',
                 'SMALL_FILE_THRESHOLD','SMALL_MIN_ACCESSES',
                 'LARGE_SHORT_MIN_ACCESSES','LARGE_SHORT_WINDOW_MINS',
                 'LARGE_LONG_MIN_ACCESSES','LARGE_LONG_WINDOW_HOURS',
@@ -477,12 +578,23 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
       var el = document.getElementById('hf_' + f);
       if (el) data[f] = el.value;
     });
+    // Per-pool fill thresholds (dynamic inputs).
+    document.querySelectorAll('input[data-hf-pool="1"]').forEach(function (el) {
+      data[el.name] = el.value;
+    });
+    // Share checkboxes: submit posts hidden 0 + checked 1; we send only the effective value.
+    document.querySelectorAll('input.hf-share-cb').forEach(function (el) {
+      data[el.name] = el.checked ? '1' : '0';
+    });
     hfPost(data, function (r) {
       showMsg(r.message, r.ok);
       if (r.cfg) {
         fields.forEach(function (f) {
           var el = document.getElementById('hf_' + f);
           if (el && r.cfg[f] !== undefined) el.value = r.cfg[f];
+        });
+        document.querySelectorAll('input[data-hf-pool="1"]').forEach(function (el) {
+          if (r.cfg[el.name] !== undefined) el.value = r.cfg[el.name];
         });
       }
       applyBtn.disabled  = true;

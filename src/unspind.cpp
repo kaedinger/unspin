@@ -47,11 +47,16 @@ static constexpr int64_t    MB                   = 1024 * KB;
 static constexpr int64_t    GB                   = 1024 * MB;
 static constexpr int64_t    TB                   = 1024 * GB;
 static constexpr int64_t    SMALL_F_THRESHOLD    = 10 * MB;
+static constexpr double     DEFAULT_MAX_FILL_PERCENT = 80.0;
 static constexpr const char RULE1[]              = "rule 1 - small";
 static constexpr const char RULE2[]              = "rule 2 - big, reads";
 static constexpr const char RULE3[]              = "rule 3 - big, opens";
 static constexpr const char DEFAULT_CFG_FILE[]   = "/usr/local/emhttp/plugins/unspin/unspin.cfg.default";
 static constexpr const char TRIM_CHARS[]         = " \t\r\n";
+// Unraid's per-disk / per-pool mount root. All disks and pools live under this prefix.
+static const     std::string MNT_PREFIX          = "/mnt/";
+// Share mount point - not a real location for Unspin to act on, rejected in SCAN_PATHS validation.
+static const     std::string SHARE_MNT           = "/mnt/user";
 
 // ---------------------------------------------------------------------------
 // Config & globals
@@ -63,7 +68,6 @@ static volatile sig_atomic_t _reload = 0;
 static volatile sig_atomic_t _paused = 0;
 
 struct Config {
-    std::string              hot_path                  = "/mnt/cache";
     std::vector<std::string> scan_paths                = {"/mnt/disk1","/mnt/disk2"};
     int64_t                  small_file_threshold      = SMALL_F_THRESHOLD;
     int                      small_min_accesses        = 1;
@@ -71,7 +75,7 @@ struct Config {
     int                      large_short_window_mins   = 5;
     int                      large_long_min_accesses   = 3;
     int                      large_long_window_hours   = 24;
-    double                   max_hot_fill_percent      = 80.0;
+    double                   default_max_fill_percent  = DEFAULT_MAX_FILL_PERCENT;
     bool                     dry_run                   = false;
     bool                     debug                     = false;
     bool                     rule1_enabled             = true;
@@ -108,10 +112,21 @@ struct AccessRecord {
     bool               has_write_open  = false; // FAN_MODIFY seen while file is open
 };
 
+struct ShareInfo {
+    std::string use_cache;   // "yes" | "prefer" | "no" | "only"
+    std::string cache_pool;  // primary cache pool name from shareCachePool
+    bool        excluded = false; // user unticked in UI (EXCLUDED_SHARES)
+};
+
+struct PoolInfo {
+    double max_fill_percent = DEFAULT_MAX_FILL_PERCENT;
+};
+
 static std::unordered_map<std::string, AccessRecord> _access_map;
-static std::unordered_set<std::string>               _no_cache_shares;
+static std::unordered_map<std::string, ShareInfo>    _shares;  // share name -> info
+static std::unordered_map<std::string, PoolInfo>     _pools;   // pool name  -> info
 static time_t      _last_cleanup     = 0;
-static std::string _last_hot_full_msg;
+static std::unordered_map<std::string, std::string> _last_pool_full_msg; // per-pool suppression
 static bool        _transfers_cached  = false;
 static time_t      _transfers_checked = 0;
 static uid_t       _nobody_uid       = 99;   // Unraid defaults; updated by init_nobody()
@@ -211,45 +226,78 @@ static std::vector<std::string> split_csv(const std::string& s) {
 
 // Extract share name from a path: /mnt/<pool>/<share>/... -> <share>
 static std::string path_share_name(const std::string& path) {
-    const std::string mnt = "/mnt/";
-    if (path.rfind(mnt, 0) != 0) return "";
-    auto pool_end = path.find('/', mnt.size());
+    if (path.rfind(MNT_PREFIX, 0) != 0) return "";
+    auto pool_end = path.find('/', MNT_PREFIX.size());
     if (pool_end == std::string::npos) return "";
     auto share_end = path.find('/', pool_end + 1);
     return path.substr(pool_end + 1,
         share_end == std::string::npos ? std::string::npos : share_end - pool_end - 1);
 }
 
-// Load /boot/config/shares/*.cfg and collect shares with shareUseCache="no"
-static void load_share_cache_settings() {
-    _no_cache_shares.clear();
+// Forward-declare the generic cfg parser so we can reuse it for share configs;
+// its definition lives further down in the config section.
+static void parse_cfg_into(const std::string& path,
+                           std::unordered_map<std::string, std::string>& raw);
+
+// Load /boot/config/shares/*.cfg into _shares. Tolerates hand-edited files
+// (spaces around `=`, optional quotes) via the generic parser.
+static void load_share_settings() {
+    _shares.clear();
     const std::string dir = "/boot/config/shares";
     DIR* d = opendir(dir.c_str());
     if (!d) return;
     struct dirent* ent;
     while ((ent = readdir(d)) != nullptr) {
         auto fname = std::string(ent->d_name);
-        if (fname.size() < 5 || fname.substr(fname.size() - 4) != ".cfg") 
-            continue;
-        
-        auto share = fname.substr(0, fname.size() - 4);
-        std::ifstream f(dir + "/" + fname);
-        if (!f.is_open()) 
+        if (fname.size() < 5 || fname.substr(fname.size() - 4) != ".cfg")
             continue;
 
-        std::string line;
-        while (std::getline(f, line)) {
-            line = trim(line);
-            if (line.rfind("shareUseCache=", 0) != 0) 
-                continue;
-            auto val = line.substr(14);
-            if (!val.empty() && val.front() == '"') val = val.substr(1);
-            if (!val.empty() && val.back()  == '"') val.pop_back();
-            if (val == "no") _no_cache_shares.insert(share);
-            break;
-        }
+        auto share = fname.substr(0, fname.size() - 4);
+        std::unordered_map<std::string, std::string> raw;
+        parse_cfg_into(dir + "/" + fname, raw);
+        if (raw.empty()) continue;
+
+        ShareInfo info;
+        if (auto it = raw.find("shareUseCache");  it != raw.end()) info.use_cache  = it->second;
+        if (auto it = raw.find("shareCachePool"); it != raw.end()) info.cache_pool = it->second;
+        _shares[share] = info;
     }
     closedir(d);
+}
+
+// Rebuild the set of treatable pools after share config or user exclusions change.
+// Pools without an explicit MAX_FILL_PERCENT_<pool> inherit default_max_fill_percent.
+static void rebuild_pools(const std::unordered_map<std::string, double>& per_pool_limits) {
+    _pools.clear();
+    for (const auto& [sname, info] : _shares) {
+        if (info.excluded) continue;
+        if (info.use_cache != "yes" && info.use_cache != "prefer") continue;
+        if (info.cache_pool.empty()) continue;
+        if (_pools.count(info.cache_pool)) continue;
+        PoolInfo p;
+        auto it = per_pool_limits.find(info.cache_pool);
+        p.max_fill_percent = (it != per_pool_limits.end())
+                           ? it->second
+                           : _cfg.default_max_fill_percent;
+        _pools[info.cache_pool] = p;
+    }
+}
+
+// True if the share's file events should be evaluated for promotion.
+static bool share_promotable(const std::string& share) {
+    auto it = _shares.find(share);
+    if (it == _shares.end()) return false;
+    const auto& info = it->second;
+    if (info.excluded) return false;
+    if (info.use_cache != "yes" && info.use_cache != "prefer") return false;
+    if (info.cache_pool.empty()) return false;
+    return true;
+}
+
+static std::string share_pool_path(const std::string& share) {
+    auto it = _shares.find(share);
+    if (it == _shares.end() || it->second.cache_pool.empty()) return "";
+    return MNT_PREFIX + it->second.cache_pool;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,9 +343,7 @@ static void load_config() {
     // Last-resort fallbacks - used only if unspin.cfg.default is missing.
     // These do not usually need to be kept in sync, only if you're bored
     std::unordered_map<std::string, std::string> raw = {
-        {"HOT_PATH",                 "/mnt/cache"},
-        {"SCAN_PATHS",               "/mnt/user"},
-        {"MAX_HOT_FILL_PERCENT",     "80"},
+        {"SCAN_PATHS",               SHARE_MNT},
         {"SMALL_FILE_THRESHOLD",     "10 MB"},
         {"SMALL_MIN_ACCESSES",       "1"},
         {"LARGE_SHORT_MIN_ACCESSES", "100"},
@@ -326,22 +372,34 @@ static void load_config() {
         return (it != raw.end()) ? it->second : empty;
     };
 
-    _cfg.hot_path                 = get("HOT_PATH");
-
     {
         auto raw_scans = split_csv(get("SCAN_PATHS"));
         _cfg.scan_paths.clear();
         for (const auto& sp : raw_scans) {
-            if (sp.rfind("/mnt/user", 0) == 0) {
-                log_warn("Ignoring scan path '" + sp + "': /mnt/user is the share mount - "
-                         "use array disk mount points (e.g. /mnt/disk1) instead");
+            if (sp.rfind(SHARE_MNT, 0) == 0) {
+                log_warn("Ignoring scan path '" + sp + "': " + SHARE_MNT + " is the share mount - "
+                         "use array disk mount points (e.g. " + MNT_PREFIX + "disk1) instead");
             } else {
                 _cfg.scan_paths.push_back(sp);
             }
         }
     }
 
-    _cfg.max_hot_fill_percent     = std::stod(get("MAX_HOT_FILL_PERCENT"));
+    // Default fill % for pools without a per-pool override.
+    // Legacy MAX_HOT_FILL_PERCENT, if present, provides the default (migration).
+    _cfg.default_max_fill_percent = DEFAULT_MAX_FILL_PERCENT;
+    if (auto it = raw.find("MAX_HOT_FILL_PERCENT"); it != raw.end() && !it->second.empty())
+        _cfg.default_max_fill_percent = std::stod(it->second);
+
+    // Collect per-pool fill limits: MAX_FILL_PERCENT_<pool>=<pct>
+    std::unordered_map<std::string, double> per_pool_limits;
+    for (const auto& [k, v] : raw) {
+        const std::string prefix = "MAX_FILL_PERCENT_";
+        if (k.rfind(prefix, 0) != 0 || k.size() <= prefix.size() || v.empty()) continue;
+        try { per_pool_limits[k.substr(prefix.size())] = std::stod(v); }
+        catch (...) { log_warn("Ignoring malformed fill limit: " + k + "=" + v); }
+    }
+
     _cfg.small_file_threshold     = parse_size(get("SMALL_FILE_THRESHOLD"));
     _cfg.small_min_accesses       = std::stoi(get("SMALL_MIN_ACCESSES"));
     _cfg.large_short_min_accesses = std::stoi(get("LARGE_SHORT_MIN_ACCESSES"));
@@ -360,22 +418,31 @@ static void load_config() {
     _cfg.log_max_lines            = std::stoi(get("LOG_MAX_LINES"));
     _cfg.exclude_patterns         = split_csv(get("EXCLUDE_PATTERNS"));
 
-    load_share_cache_settings();
+    load_share_settings();
+
+    // Apply user-excluded shares (EXCLUDED_SHARES) onto loaded share records.
+    auto excluded_csv = split_csv(get("EXCLUDED_SHARES"));
+    std::unordered_set<std::string> exset(excluded_csv.begin(), excluded_csv.end());
+    for (auto& [sname, info] : _shares)
+        info.excluded = exset.count(sname) > 0;
+
+    rebuild_pools(per_pool_limits);
 }
 
 static void log_config() {
     log_info("Config: " + _cfg_file);
-    log_info("Hot path: " + _cfg.hot_path);
     for (const auto& sp : _cfg.scan_paths)
         log_info("Scan path: " + sp);
-    log_info("Max hot fill: " + std::to_string((int)_cfg.max_hot_fill_percent) + "%");
+    for (const auto& [pool, info] : _pools)
+        log_info("Pool: " + MNT_PREFIX + pool + " max fill " +
+                 std::to_string((int)info.max_fill_percent) + "%");
     {
         std::string excl;
         for (const auto& p : _cfg.exclude_patterns) {
             if (!excl.empty()) excl += ", ";
             excl += p;
         }
-        log_info("Exclude: " + (excl.empty() ? std::string("(none)") : excl));
+        log_info("Exclude patterns: " + (excl.empty() ? std::string("(none)") : excl));
     }
     log_info((_cfg.rule1_enabled ? "" : "DISABLED: ") +
              std::string("Small file threshold: ") + human_size(_cfg.small_file_threshold) +
@@ -389,11 +456,22 @@ static void log_config() {
              " opens / " + std::to_string(_cfg.large_long_window_hours) + " h, min reads filter: " +
              (_cfg.rule3_min_reads == 0 ? std::string("off") : std::to_string(_cfg.rule3_min_reads)));
     if (_cfg.dry_run) log_info("DRY RUN mode - no files will be moved");
-    if (!_no_cache_shares.empty()) {
-        std::string s;
-        for (const auto& sh : _no_cache_shares) { if (!s.empty()) s += ", "; s += sh; }
-        log_info("Shares with Use Cache=No (skipping): " + s);
+
+    // Summarise share status: promotable vs skipped (with reason).
+    std::vector<std::string> promo, excluded, not_use, no_pool;
+    for (const auto& [sname, info] : _shares) {
+        if (info.use_cache != "yes" && info.use_cache != "prefer") { not_use.push_back(sname); continue; }
+        if (info.cache_pool.empty()) { no_pool.push_back(sname); continue; }
+        if (info.excluded)           { excluded.push_back(sname); continue; }
+        promo.push_back(sname + "->" + info.cache_pool);
     }
+    auto join = [](const std::vector<std::string>& v) {
+        std::string s; for (const auto& x : v) { if (!s.empty()) s += ", "; s += x; } return s;
+    };
+    if (!promo.empty())    log_info("Treating shares: "            + join(promo));
+    if (!excluded.empty()) log_info("User-excluded shares: "       + join(excluded));
+    if (!not_use.empty())  log_info("Skipping (use_cache!=yes/prefer): " + join(not_use));
+    if (!no_pool.empty())  log_info("Skipping (no cache pool set): " + join(no_pool));
 }
 
 // ---------------------------------------------------------------------------
@@ -438,18 +516,19 @@ static bool transfers_active() {
 // File movement
 // ---------------------------------------------------------------------------
 
+// Map /mnt/<disk>/<share>/<rel> to /mnt/<share.cache_pool>/<share>/<rel>.
+// Returns "" if the share is unknown or not promotable; callers must handle this.
 static std::string resolve_destination(const std::string& src) {
-    // Strip /mnt/<pool>/ prefix and rebase under hot_path.
-    // e.g. /mnt/user/media/foo.mkv -> /mnt/cache/media/foo.mkv
-    const std::string mnt = "/mnt/";
-    if (src.rfind(mnt, 0) == 0) {
-        auto next = src.find('/', mnt.size());
-        if (next != std::string::npos)
-            return _cfg.hot_path + "/" + src.substr(next + 1);
-    }
-    auto slash = src.rfind('/');
-    return _cfg.hot_path + "/" +
-           (slash != std::string::npos ? src.substr(slash + 1) : src);
+    if (src.rfind(MNT_PREFIX, 0) != 0) return "";
+    auto pool_end = src.find('/', MNT_PREFIX.size());
+    if (pool_end == std::string::npos) return "";
+    auto share_end = src.find('/', pool_end + 1);
+    if (share_end == std::string::npos) return "";
+    auto share = src.substr(pool_end + 1, share_end - pool_end - 1);
+
+    auto pool_path = share_pool_path(share);
+    if (pool_path.empty()) return "";
+    return pool_path + src.substr(pool_end);
 }
 
 static bool copy_file(const std::string& src, const std::string& dst) {
@@ -641,17 +720,23 @@ static void handle_event(const std::string& path, EvType ev) {
         if (path.rfind(sp, 0) == 0) { in_scope = true; break; }
     if (!in_scope) return;
 
-    // already hot?
-    if (path.rfind(_cfg.hot_path, 0) == 0) return;
+    // Already on a known cache pool mount? (defensive - scan_paths should only be array disks)
+    if (path.rfind(MNT_PREFIX, 0) == 0) {
+        auto end = path.find('/', MNT_PREFIX.size());
+        if (end != std::string::npos) {
+            auto top = path.substr(MNT_PREFIX.size(), end - MNT_PREFIX.size());
+            if (_pools.count(top)) return;
+        }
+    }
 
     // Excluded patterns
     for (const auto& ex : _cfg.exclude_patterns)
         if (!ex.empty() && path.find(ex) != std::string::npos) return;
 
-    // Skip shares with Use Cache = No
+    // Share must be promotable (use_cache=yes|prefer, has pool, not user-excluded)
     auto sname = path_share_name(path);
-    if (!sname.empty() && _no_cache_shares.count(sname)) {
-        log_debug("[no-cache] skipping " + path);
+    if (sname.empty() || !share_promotable(sname)) {
+        log_debug("[skip share] " + path);
         return;
     }
 
@@ -707,16 +792,19 @@ static void handle_event(const std::string& path, EvType ev) {
             log_info("[" + dec.rule + "] Mover or rsync active, deferring: " + path);
             return;
         }
-        auto fill = disk_fill_percent(_cfg.hot_path);
-        if (fill >= _cfg.max_hot_fill_percent) {
-            auto msg = "[" + dec.rule + "] Hot tier " + std::to_string((int)fill) +
-                              "% full, skipping: " + path;
-            if (msg != _last_hot_full_msg) { 
-                log_info(msg);  
-                _last_hot_full_msg = msg; 
-            } else { 
-                log_debug(msg); 
-            }
+
+        const auto& pool_name = _shares.at(sname).cache_pool;
+        auto pit = _pools.find(pool_name);
+        auto limit = (pit != _pools.end()) ? pit->second.max_fill_percent
+                                           : _cfg.default_max_fill_percent;
+        auto pool_path = MNT_PREFIX + pool_name;
+        auto fill = disk_fill_percent(pool_path);
+        if (fill >= limit) {
+            auto msg = "[" + dec.rule + "] Pool " + pool_path + " " +
+                       std::to_string((int)fill) + "% full, skipping: " + path;
+            auto& last = _last_pool_full_msg[pool_path];
+            if (msg != last) { log_info(msg); last = msg; }
+            else             { log_debug(msg); }
             return;
         }
         if (promote_file(path, size, dec))

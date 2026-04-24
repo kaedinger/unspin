@@ -3,9 +3,15 @@
 # Do not edit while the daemon is running
 
 SERVICE="disabled"
-HOT_PATH="/mnt/cache"
 SCAN_PATHS="/mnt/disk1,/mnt/disk2"
-MAX_HOT_FILL_PERCENT="80"
+
+# Per-pool fill thresholds are written as MAX_FILL_PERCENT_<pool>=<pct>
+# by the settings page. No global hot-tier setting exists anymore - promotion
+# destinations come from each share's shareCachePool in /boot/config/shares/*.cfg.
+
+# Comma-separated share names to skip even when shareUseCache=yes|prefer.
+# Managed by the Detected Shares table on the settings page.
+EXCLUDED_SHARES=""
 
 # Rule 1: small-file rule - promote files <= threshold after N reads
 SMALL_FILE_THRESHOLD="10 MB"
