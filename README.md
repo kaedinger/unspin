@@ -45,9 +45,10 @@ There's no explicit cold demotion - for now we rely on Unraid's mover.
 - **Event-driven** - reacts to each file read in real time via fanotify on the underlying array disk mounts, no polling or cron schedule
 - **Two-tier rule set** - separate thresholds for small files (first-access promotion) and large files (streaming/periodic use detection)
 - **Deferred promotion** - promotion waits until all open handles are closed, so readers never lose their file mid-stream
-- **Use Cache=No respected** - shares configured with "Use Cache: No" in Unraid are never promoted
+- **Per-share cache pool routing** - destinations follow each share's own `shareCachePool` setting in Unraid, so different shares can promote to different pools (e.g. `/mnt/cache` for some, `/mnt/nvme` for others). Shares with `Use Cache: No` or `only` are skipped automatically; shares with `yes` or `prefer` are eligible.
+- **Detected Shares table** - the settings page lists every share with its current routing and a per-share Watch toggle to opt individual shares out without changing Unraid's settings
 - **Mover/rsync-aware** - skips promotion while Unraid's mover (or a local rsync) is running to avoid conflicts
-- **Hot-tier fill guard** - stops promoting when the cache exceeds a configurable fill %
+- **Per-pool fill guard** - each pool gets its own fill % threshold; promotion to that pool stops once it's exceeded
 - **Dry-run mode** - logs every decision without moving anything
 - **Exclude patterns** - skip any path substring
 - **Rule toggles** - each rule can be individually enabled or disabled from the settings page
@@ -99,9 +100,9 @@ unspin/
 | Key | Default | Description |
 |---|---|---|
 | `SERVICE` | `disabled` | `enabled` to start daemon automatically |
-| `HOT_PATH` | `/mnt/cache` | Fast storage to promote hot files into |
 | `SCAN_PATHS` | `/mnt/disk1,/mnt/disk2` | Comma-separated **array disk** mount points to watch |
-| `MAX_HOT_FILL_PERCENT` | `80` | Stop promoting when hot tier exceeds this % full |
+| `EXCLUDED_SHARES` | *(empty)* | Comma-separated share names to skip even when `shareUseCache` is `yes` or `prefer`. Managed by the Detected Shares table on the settings page. |
+| `MAX_FILL_PERCENT_<pool>` | `80` | One entry per pool referenced by a watched share, e.g. `MAX_FILL_PERCENT_cache=80`. Promotion to that pool stops once its fill exceeds the threshold. |
 | `SMALL_FILE_THRESHOLD` | `10 MB` | Files at or below this size use the small-file rule |
 | `SMALL_MIN_ACCESSES` | `1` | Total reads required to promote a small file |
 | `LARGE_SHORT_MIN_ACCESSES` | `100` | Reads required within the short window |
@@ -187,7 +188,7 @@ kill -RTMIN  $(cat /var/run/unspind.pid)   # toggle pause
 
 When a file qualifies for promotion, Unspin
 
-1. resolves the destination path by rebasing the file path to `HOT_PATH` (e.g. `/mnt/user/media/foo.mkv` -> `/mnt/cache/media/foo.mkv`),
+1. looks up the share's `shareCachePool` from `/boot/config/shares/<share>.cfg` and rebases the file path onto that pool (e.g. for share `media` with `shareCachePool=cache`, `/mnt/disk1/media/foo.mkv` -> `/mnt/cache/media/foo.mkv`),
 2. copies data using `sendfile` (zero-copy kernel transfer),
 3. removes the source with `unlink` only after the copy succeeds
 

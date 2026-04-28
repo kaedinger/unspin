@@ -204,10 +204,6 @@ dt.hf-rule-label {
   border-radius: 50%;
 }
 .hf-footer-sep { opacity: 0.35; }
-.hf-footer-soon {
-  opacity: 0.4;
-  cursor: default;
-}
 
 /* Reset-to-default icon buttons */
 .hf-reset {
@@ -533,7 +529,7 @@ dt.hf-share-name {
   <span class="hf-footer-sep">·</span>
   <a href="https://forums.unraid.net/topic/198091-plugin-unspin-rudimentary-hot-file-tiering-for-unraid/" target="_blank" rel="noopener">Support forum</a>
   <span class="hf-footer-sep">·</span>
-  <span class="hf-footer-soon" title="GitHub Sponsors - coming soon">Sponsor ♥ - THANK YOU</span>
+  <a href="https://github.com/sponsors/kaedinger" target="_blank" rel="noopener">Sponsor ♥ - THANK YOU</a>
   <span class="hf-footer-sep">·</span>
   <a href="https://www.paypal.com/donate/?hosted_button_id=ASP53VDRXMDYE" target="_blank" rel="noopener">Donate ♥ - THANK YOU</a>
   <span class="hf-footer-version">Unspin<?= " v{$version}" ?></span>

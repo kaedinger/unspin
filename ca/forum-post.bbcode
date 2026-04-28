@@ -26,9 +26,10 @@ Promotion is always deferred until all open file handles are closed, so readers 
 [*][b]Event-driven[/b] - reacts to each file read in real time via fanotify, no polling or cron
 [*][b]Three-rule promotion[/b] - separate thresholds for small files and large files (streaming burst / periodic access)
 [*][b]Deferred promotion[/b] - waits until all open handles are closed, so readers never lose their file
-[*][b]Use Cache=No respected[/b] - shares configured with "Use Cache: No" are never promoted
+[*][b]Per-share cache pool routing[/b] - destinations follow each share's own [font=monospace]shareCachePool[/font] setting in Unraid, so different shares can promote to different pools. Shares with "Use Cache: No" or "only" are skipped automatically.
+[*][b]Detected Shares table[/b] - the settings page lists every share with its current routing and a per-share Watch toggle to opt individual shares out
 [*][b]Mover/rsync-aware[/b] - automatically pauses while Unraid's mover or rsync is running
-[*][b]Hot-tier fill guard[/b] - stops promoting when cache exceeds a configurable fill %
+[*][b]Per-pool fill guard[/b] - each pool gets its own fill % threshold; promotion to that pool stops once it's exceeded
 [*][b]Dry-run mode[/b] - logs every decision without moving anything
 [*][b]Exclude patterns[/b] - skip any path substring
 [*][b]Rule toggles[/b] - each rule can be individually enabled/disabled
