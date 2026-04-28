@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "Unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.04.23.50591">
+  <!ENTITY version   "2026.04.28.71931">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,7 +19,7 @@
 >
 
 <CHANGES>
-### next
+### 2026.04.28.71931
 - ci: accept YYYY.MM.DD.SECS-dev tags, publish as GitHub prereleases for staged testing
 - feat: per-share routing - promotion destinations now come from each share's shareCachePool; HOT_PATH removed
 - feat: per-pool fill thresholds - MAX_FILL_PERCENT_<pool> replaces the single MAX_HOT_FILL_PERCENT; legacy value migrates as a seed on first UI save
