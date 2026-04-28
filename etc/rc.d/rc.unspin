@@ -38,21 +38,28 @@ unspin_start() {
 }
 
 unspin_stop() {
-    if ! is_running; then
-        echo "unspind is not running."
-        rm -f "$PID_FILE"
-        return 0
+    local was_running=0
+    if is_running; then
+        was_running=1
+        echo "Stopping unspind (PID $(cat "$PID_FILE"))..."
+        kill "$(cat "$PID_FILE")" 2>/dev/null
+        local i
+        for i in 1 2 3 4 5; do
+            kill -0 "$(cat "$PID_FILE")" 2>/dev/null || break
+            sleep 1
+        done
     fi
-    echo "Stopping unspind..."
-    kill "$(cat "$PID_FILE")"
-    local i
-    for i in 1 2 3 4 5; do
-        kill -0 "$(cat "$PID_FILE")" 2>/dev/null || break
+    # Catch orphans not tracked by the pidfile (e.g. left over from a prior install).
+    if pgrep -fx "$DAEMON" >/dev/null 2>&1; then
+        echo "Killing orphan unspind processes: $(pgrep -fx "$DAEMON" | tr '\n' ' ')"
+        pkill -fx "$DAEMON"
         sleep 1
-    done
+        pkill -9 -fx "$DAEMON" 2>/dev/null
+        was_running=1
+    fi
     rm -f "$PID_FILE"
     rm -rf "$PAUSE_DIR"
-    echo "unspind stopped."
+    [ "$was_running" -eq 1 ] && echo "unspind stopped." || echo "unspind is not running."
 }
 
 unspin_status() {

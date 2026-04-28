@@ -33,6 +33,14 @@ function fmt_size($v) {
     return preg_replace('/(\d)([KMGT]B?)$/i', '$1 $2', trim($v));
 }
 
+function fmt_bytes($n) {
+    $u = ['B','KB','MB','GB','TB','PB'];
+    $i = 0;
+    $v = (float)$n;
+    while ($v >= 1024 && $i < count($u) - 1) { $v /= 1024; $i++; }
+    return ($v >= 100 ? round($v) : round($v, 1)) . ' ' . $u[$i];
+}
+
 function opt($val, $current, $label) {
     $sel = ($current === $val) ? ' selected' : '';
     return "<option value=\"" . htmlspecialchars($val) . "\"$sel>" . htmlspecialchars($label) . "</option>";
@@ -207,10 +215,25 @@ dt.hf-rule-label {
   color: #f5a623;
   opacity: 0.8;
   cursor: pointer;
-  vertical-align: middle;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
   user-select: none;
 }
 .hf-reset:hover { opacity: 1; }
+
+/* Per-share row in Detected Shares */
+dt.hf-share-name {
+  text-align: right;
+  font-weight: normal;
+}
+.hf-share-row {
+  display: grid;
+  grid-template-columns: 6em 8em 11em 3em;
+  align-items: center;
+  gap: 10px;
+}
+.hf-share-head { font-weight: bold; opacity: 0.75; }
 </style>
 
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
@@ -280,59 +303,63 @@ dt.hf-rule-label {
     <div class="hf-help">Comma-separated <strong>array disk</strong> mount points to watch, e.g. <code>/mnt/disk1,/mnt/disk2,/mnt/disk3</code>. Use disk paths, not shares!</div>
   </dd>
 
-  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Detected Shares</dt>
+  <dt class="hf-has-help" data-help-target="hf-shares-help" onclick="hfToggleHelp(this)">Detected Shares</dt>
   <dd>
-    <table class="hf-shares" style="border-collapse:collapse;margin-bottom:4px;">
-      <thead>
-        <tr style="text-align:left;">
-          <th style="padding:2px 8px 2px 0;">Treat</th>
-          <th style="padding:2px 8px;">Share</th>
-          <th style="padding:2px 8px;">Use Cache</th>
-          <th style="padding:2px 8px;">Pool</th>
-          <th style="padding:2px 8px;">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-      <?php if (empty($shares)): ?>
-        <tr><td colspan="5" style="padding:4px 0;opacity:0.6;">No shares found in <code>/boot/config/shares</code>.</td></tr>
-      <?php else: foreach ($shares as $sname => $info):
-        $uc    = $info['use_cache'] ?: '-';
-        $pool  = $info['cache_pool'] ?: '-';
-        $promo = ($info['use_cache'] === 'yes' || $info['use_cache'] === 'prefer') && $info['cache_pool'] !== '';
-        $skip  = '';
-        if (!$promo) {
-            if ($info['use_cache'] === '')              $skip = 'no use_cache set';
-            else if ($info['use_cache'] === 'no')       $skip = 'cache disabled';
-            else if ($info['use_cache'] === 'only')     $skip = 'cache-only, not on array';
-            else if ($info['cache_pool'] === '')        $skip = 'no cache pool set';
-            else                                        $skip = 'not promotable';
-        }
-        $ticked = $promo && !isset($excluded_set[$sname]);
-        $status = !$promo ? ('<span style="opacity:0.6;">skipped: ' . htmlspecialchars($skip) . '</span>')
-                          : ($ticked ? '<span style="color:#4ade80;">promotable</span>'
-                                     : '<span style="color:#facc15;">excluded by user</span>');
-      ?>
-        <tr>
-          <td style="padding:2px 8px 2px 0;">
-            <?php if ($promo): ?>
-              <input type="hidden" name="SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>" value="0">
-              <input type="checkbox" class="hf-share-cb"
-                     id="hf_SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>"
-                     name="SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>" value="1"
-                     <?= $ticked ? 'checked' : '' ?>>
-            <?php else: ?>
-              <input type="checkbox" disabled>
-            <?php endif; ?>
-          </td>
-          <td style="padding:2px 8px;"><code><?= htmlspecialchars($sname) ?></code></td>
-          <td style="padding:2px 8px;"><?= htmlspecialchars($uc) ?></td>
-          <td style="padding:2px 8px;"><?= htmlspecialchars($pool) ?></td>
-          <td style="padding:2px 8px;"><?= $status ?></td>
-        </tr>
-      <?php endforeach; endif; ?>
-      </tbody>
-    </table>
-    <div class="hf-help">Untick a share to prevent Unspin from promoting its files, even when <code>shareUseCache</code> is <code>yes</code> or <code>prefer</code>. Shares with <code>no</code> or <code>only</code> are always skipped and cannot be toggled.</div>
+    <?php if (!empty($shares)): ?>
+    <div class="hf-share-row hf-share-head">
+      <span>Use Cache</span>
+      <span>Pool</span>
+      <span>Status</span>
+      <span>Watch</span>
+    </div>
+    <?php endif; ?>
+  </dd>
+  <?php if (empty($shares)): ?>
+    <dt></dt>
+    <dd style="opacity:0.6;">No shares found in <code>/boot/config/shares</code>.</dd>
+  <?php else: foreach ($shares as $sname => $info):
+    $uc    = $info['use_cache'] ?: '-';
+    $pool  = $info['cache_pool'] ?: '-';
+    $promo = ($info['use_cache'] === 'yes' || $info['use_cache'] === 'prefer') && $info['cache_pool'] !== '';
+    $skip  = '';
+    if (!$promo) {
+        if      ($info['use_cache'] === '')     $skip = 'no use_cache';
+        else if ($info['use_cache'] === 'no')   $skip = 'cache disabled';
+        else if ($info['use_cache'] === 'only') $skip = 'cache-only';
+        else if ($info['cache_pool'] === '')    $skip = 'no pool';
+        else                                    $skip = 'not promotable';
+    }
+    $ticked = $promo && !isset($excluded_set[$sname]);
+    $status = !$promo
+            ? '<span style="opacity:0.6;">' . htmlspecialchars($skip) . '</span>'
+            : ($ticked
+                ? '<span style="color:#4ade80;">promotable</span>'
+                : '<span style="color:#facc15;">excluded</span>');
+  ?>
+    <dt class="hf-share-name"><code><?= htmlspecialchars($sname) ?></code></dt>
+    <dd>
+      <div class="hf-share-row">
+        <span><?= htmlspecialchars($uc) ?></span>
+        <span><?= htmlspecialchars($pool) ?></span>
+        <span><?= $status ?></span>
+        <span>
+          <?php if ($promo): ?>
+            <input type="hidden" name="SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>" value="0">
+            <input type="checkbox" class="hf-share-cb"
+                   id="hf_SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>"
+                   name="SHARE_EXCLUDE_<?= htmlspecialchars($sname) ?>" value="1"
+                   <?= $ticked ? 'checked' : '' ?>>
+          <?php else: ?>
+            <input type="checkbox" disabled>
+          <?php endif; ?>
+        </span>
+      </div>
+    </dd>
+  <?php endforeach; endif; ?>
+
+  <dt>&nbsp;</dt>
+  <dd>
+    <div class="hf-help" id="hf-shares-help">Untick a share to prevent Unspin from promoting its files, even when <code>shareUseCache</code> is <code>yes</code> or <code>prefer</code>. Shares with <code>no</code> or <code>only</code> are always skipped and cannot be toggled.</div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Fill Limits</dt>
@@ -340,15 +367,26 @@ dt.hf-rule-label {
   <?php if (empty($detected_pools)): ?>
     <div style="opacity:0.6;">No promotable pools detected - enable at least one share above.</div>
   <?php else: foreach ($detected_pools as $pool):
-      $key    = 'MAX_FILL_PERCENT_' . $pool;
-      $val    = isset($c[$key]) && is_numeric($c[$key]) ? intval($c[$key]) : $legacy_fill;
+      $key      = 'MAX_FILL_PERCENT_' . $pool;
+      $val      = isset($c[$key]) && is_numeric($c[$key]) ? intval($c[$key]) : $legacy_fill;
+      $mnt      = '/mnt/' . $pool;
+      $total    = @disk_total_space($mnt);
+      $free     = @disk_free_space($mnt);
+      $size_str = '';
+      if ($total && $free !== false) {
+          $used    = $total - $free;
+          $pct     = $total > 0 ? round($used * 100 / $total) : 0;
+          $size_str = fmt_bytes($total) . ', ' . $pct . '% used';
+      }
   ?>
     <div class="hf-row" style="margin-bottom:4px;">
-      <code style="min-width:12em;">/mnt/<?= htmlspecialchars($pool) ?></code>
+      <span style="min-width:12em;font-family:monospace;"><?= htmlspecialchars($mnt) ?></span>
       <input type="number" id="hf_<?= htmlspecialchars($key) ?>" name="<?= htmlspecialchars($key) ?>"
-             min="10" max="99" value="<?= $val ?>" style="width:6em"
+             min="10" max="99" value="<?= $val ?>" style="width:5em"
              data-hf-pool="1">
-      <span>% full - stop promoting</span>
+      <span>%</span>
+      <span class="hf-reset" onclick="document.getElementById('hf_<?= htmlspecialchars($key) ?>').value='80';document.getElementById('hf_<?= htmlspecialchars($key) ?>').dispatchEvent(new Event('input',{bubbles:true}));" title="Reset to default (80)">&#x21ba;</span>
+      <?php if ($size_str): ?><span style="opacity:0.7;margin-left:1em;"><?= htmlspecialchars($size_str) ?></span><?php endif; ?>
     </div>
   <?php endforeach; endif; ?>
     <div class="hf-help">Stop promoting to a pool once its fill exceeds this percentage. One value per detected pool. Default <strong>80%</strong>.</div>
@@ -432,7 +470,11 @@ dt.hf-rule-label {
       minutes
     </div>
   </dd>
+</dl>
 
+<hr>
+
+<dl>
   <dt class="hf-has-help hf-rule-label" onclick="hfToggleHelp(this)">Rule 3 - Large Files, Long Window</dt>
   <dd>
     <select name="RULE3_ENABLED" id="hf_RULE3_ENABLED">
@@ -647,10 +689,14 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
   };
 
   window.hfToggleHelp = function (dt) {
-    var dd = dt.nextElementSibling;
-    while (dd && dd.tagName !== 'DD') dd = dd.nextElementSibling;
-    if (!dd) return;
-    var help = dd.querySelector('.hf-help');
+    var help = null;
+    if (dt.dataset.helpTarget) {
+      help = document.getElementById(dt.dataset.helpTarget);
+    } else {
+      var dd = dt.nextElementSibling;
+      while (dd && dd.tagName !== 'DD') dd = dd.nextElementSibling;
+      if (dd) help = dd.querySelector('.hf-help');
+    }
     if (help) help.classList.toggle('open');
   };
 

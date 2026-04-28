@@ -23,9 +23,9 @@
 - ci: accept YYYY.MM.DD.SECS-dev tags, publish as GitHub prereleases for staged testing
 - feat: per-share routing - promotion destinations now come from each share's shareCachePool; HOT_PATH removed
 - feat: per-pool fill thresholds - MAX_FILL_PERCENT_<pool> replaces the single MAX_HOT_FILL_PERCENT; legacy value migrates as a seed on first UI save
-- ui: Detected Shares table with per-share treat/skip checkboxes (EXCLUDED_SHARES)
-- ui: per-pool fill % inputs replace Hot Tier Path + Max Hot Tier Fill %
+- ui: cosmetics
 - daemon: skip shares unless shareUseCache is yes or prefer and a cache pool is configured
+- init: rc.unspin stop also kills orphan unspind processes not tracked in the pidfile
 - docs: add README.md shown on the Unraid plugin page
 
 ### 2026.04.23.50591
