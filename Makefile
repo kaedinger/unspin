@@ -3,7 +3,7 @@
 # Produces the .txz package that the .plg installs
 ##############################################################
 
-PLUGIN   := Unspin
+PLUGIN   := unspin
 PLG_FILE := unspin.plg
 VERSION  := $(shell date +%Y.%m.%d)
 PKG_DIR  := pkg

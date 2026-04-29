@@ -36,5 +36,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             $PRERELEASE \
             --generate-notes \
-            "pkg/Unspin-${{ github.ref_name }}-x86_64-1.txz" \
+            "pkg/unspin-${{ github.ref_name }}-x86_64-1.txz" \
             "unspin.plg"

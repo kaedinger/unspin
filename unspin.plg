@@ -1,6 +1,6 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
-  <!ENTITY name      "Unspin">
+  <!ENTITY name      "unspin">
   <!ENTITY author    "kaedinger">
   <!ENTITY version   "2026.04.29.37949">
   <!ENTITY launch    "Utilities/Unspin">
@@ -19,6 +19,11 @@
 >
 
 <CHANGES>
+### next
+- fix: plugin name attribute lowercased to match install dir so Unraid renders README.md on the Plugins page (was falling back to plain bold name due to case mismatch)
+- pkg: TXZ filename lowercased to unspin-VERSION-x86_64-1.txz
+- install: one-time removepkg of legacy capital-U package on upgrade to keep slackware pkg db clean
+
 ### 2026.04.29.37949
 - ui: per-share Status column updates live when ticking/unticking Watch checkboxes (no reload required)
 - ui: clicking the Detected Shares label scrolls the help text into view since it sits below the share list
@@ -111,6 +116,9 @@ echo ""
 
 # Stop daemon before replacing files
 /etc/rc.d/rc.unspin stop 2>/dev/null
+
+# Migrate from legacy capital-U package name (drop after a few releases - see CHANGES)
+removepkg Unspin 2>/dev/null
 
 # Remove old version if present
 removepkg &name; 2>/dev/null
