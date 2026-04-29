@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.04.29.42607">
+  <!ENTITY version   "2026.04.29.43847">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### 2026.04.29.43847
+- docs: fix plugin title rendering in README (broken bold markdown)
+
 ### 2026.04.29.42607
 - fix: plugin name attribute lowercased to match install dir so Unraid renders README.md on the Plugins page (was falling back to plain bold name due to case mismatch)
 - pkg: TXZ filename lowercased to unspin-VERSION-x86_64-1.txz
