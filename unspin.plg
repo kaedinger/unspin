@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- ui: per-share Status column updates live when ticking/unticking Watch checkboxes (no reload required)
+
 ### 2026.04.28.72996
 - ui: footer Sponsor link now points to GitHub Sponsors
 - docs: README and forum post updated for per-share pool routing and Detected Shares

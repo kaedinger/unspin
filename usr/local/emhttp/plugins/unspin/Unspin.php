@@ -551,6 +551,20 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
     el.addEventListener('input',  function () { applyBtn.disabled = false; });
   });
 
+  // Live-update the Status column when a share is ticked/unticked, so the
+  // displayed promotable/excluded badge reflects the pending state without a reload.
+  document.querySelectorAll('input.hf-share-cb').forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      var row = cb.closest('.hf-share-row');
+      if (!row) return;
+      var statusCell = row.children[2];
+      if (!statusCell) return;
+      statusCell.innerHTML = cb.checked
+        ? '<span style="color:#4ade80;">promotable</span>'
+        : '<span style="color:#facc15;">excluded</span>';
+    });
+  });
+
   function showMsg(text, ok) {
     msgEl.innerHTML = '<span style="color:' + (ok ? '#4ade80' : '#f87171') + '">' +
                       text.replace(/</g, '&lt;') + '</span>';
