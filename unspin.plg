@@ -21,6 +21,8 @@
 <CHANGES>
 ### next
 - ui: per-share Status column updates live when ticking/unticking Watch checkboxes (no reload required)
+- ui: clicking the Detected Shares label scrolls the help text into view since it sits below the share list
+- ui: Detected Shares help text reminds you to click Apply to save changes
 
 ### 2026.04.28.72996
 - ui: footer Sponsor link now points to GitHub Sponsors

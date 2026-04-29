@@ -355,7 +355,7 @@ dt.hf-share-name {
 
   <dt>&nbsp;</dt>
   <dd>
-    <div class="hf-help" id="hf-shares-help">Untick a share to prevent Unspin from promoting its files, even when <code>shareUseCache</code> is <code>yes</code> or <code>prefer</code>. Shares with <code>no</code> or <code>only</code> are always skipped and cannot be toggled.</div>
+    <div class="hf-help" id="hf-shares-help">Untick a share to prevent Unspin from promoting its files, even when <code>shareUseCache</code> is <code>yes</code> or <code>prefer</code>. Shares with <code>no</code> or <code>only</code> are always skipped and cannot be toggled. Click <strong>Apply</strong> below to save your changes.</div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Fill Limits</dt>
@@ -700,14 +700,23 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
 
   window.hfToggleHelp = function (dt) {
     var help = null;
-    if (dt.dataset.helpTarget) {
+    var detached = !!dt.dataset.helpTarget;
+    if (detached) {
       help = document.getElementById(dt.dataset.helpTarget);
     } else {
       var dd = dt.nextElementSibling;
       while (dd && dd.tagName !== 'DD') dd = dd.nextElementSibling;
       if (dd) help = dd.querySelector('.hf-help');
     }
-    if (help) help.classList.toggle('open');
+    if (!help) return;
+    help.classList.toggle('open');
+    // Help text rendered far from its click target (e.g. Detected Shares help
+    // sits below the share table) — scroll it into view after expansion.
+    if (detached && help.classList.contains('open')) {
+      setTimeout(function () {
+        help.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 280);
+    }
   };
 
   setInterval(function () {
