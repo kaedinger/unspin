@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.04.29.37949">
+  <!ENTITY version   "2026.04.29.42607">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,7 +19,7 @@
 >
 
 <CHANGES>
-### next
+### 2026.04.29.42607
 - fix: plugin name attribute lowercased to match install dir so Unraid renders README.md on the Plugins page (was falling back to plain bold name due to case mismatch)
 - pkg: TXZ filename lowercased to unspin-VERSION-x86_64-1.txz
 - install: one-time removepkg of legacy capital-U package on upgrade to keep slackware pkg db clean
