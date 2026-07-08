@@ -284,6 +284,28 @@ dt.hf-share-name {
     </select>
     <div class="hf-help">Pause event counting while any <code>rsync</code> process is running on the system. Unraid's Mover always pauses Unspin regardless of this setting. Tools like <em>Unbalanced</em> use rsync to move files between array disks - leaving this enabled prevents their activity from inflating access counters and triggering false promotions. <strong>Default: Yes.</strong></div>
   </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Mount Wait Timeout</dt>
+  <dd>
+    <div class="hf-row">
+      <input type="number" id="hf_MOUNT_WAIT_TIMEOUT_MINS" name="MOUNT_WAIT_TIMEOUT_MINS" min="0"
+        value="<?= htmlspecialchars($c['MOUNT_WAIT_TIMEOUT_MINS']) ?>" style="width:6em">
+      <span>min</span>
+      <span class="hf-reset" onclick="hfReset('MOUNT_WAIT_TIMEOUT_MINS')" title="Reset to default">&#x21ba;</span>
+    </div>
+    <div class="hf-help">On a slow boot the array - especially ZFS pools - can take <strong>20-30 minutes</strong> to mount. Rather than start with nothing to watch, Unspin waits up to this many minutes for each scan path to mount, raising an Unraid notification while it waits and a failure notification if the path never appears. <code>0</code> disables waiting (skip missing mounts immediately). <strong>Default: 45.</strong></div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Mount Retry Interval</dt>
+  <dd>
+    <div class="hf-row">
+      <input type="number" id="hf_MOUNT_RETRY_INTERVAL_SECS" name="MOUNT_RETRY_INTERVAL_SECS" min="1"
+        value="<?= htmlspecialchars($c['MOUNT_RETRY_INTERVAL_SECS']) ?>" style="width:6em">
+      <span>sec</span>
+      <span class="hf-reset" onclick="hfReset('MOUNT_RETRY_INTERVAL_SECS')" title="Reset to default">&#x21ba;</span>
+    </div>
+    <div class="hf-help">How often to re-check whether a pending scan path has mounted, while waiting (see Mount Wait Timeout). <strong>Default: 30.</strong></div>
+  </dd>
 </dl>
 
 <hr>
@@ -617,6 +639,7 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
                 'LARGE_SHORT_MIN_ACCESSES','LARGE_SHORT_WINDOW_MINS',
                 'LARGE_LONG_MIN_ACCESSES','LARGE_LONG_WINDOW_HOURS',
                 'EXCLUDE_PATTERNS','DRY_RUN','LOG_LEVEL','PAUSE_ON_RSYNC',
+                'MOUNT_WAIT_TIMEOUT_MINS','MOUNT_RETRY_INTERVAL_SECS',
                 'RULE1_ENABLED','RULE1_FALLTHROUGH','RULE2_ENABLED','RULE3_ENABLED',
                 'RULE3_MIN_READS'];
 

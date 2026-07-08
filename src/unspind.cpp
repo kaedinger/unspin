@@ -86,6 +86,8 @@ struct Config {
     bool                     pause_on_rsync            = true; // pause event counting while any rsync process is running
     std::string              log_file                  = "/var/log/unspin.log";
     int                      log_max_lines             = 3000;
+    int                      mount_wait_timeout_mins   = 45;   // wait this long for scan paths to mount (0 = don't wait)
+    int                      mount_retry_interval_secs = 30;   // seconds between mount re-checks while waiting
     std::vector<std::string> exclude_patterns;
 };
 
@@ -361,6 +363,8 @@ static void load_config() {
         {"EXCLUDE_PATTERNS",         "/nevercachethis,/orthis"},
         {"LOG_FILE",                 "/var/log/unspin.log"},
         {"LOG_MAX_LINES",            "3000"},
+        {"MOUNT_WAIT_TIMEOUT_MINS",  "45"},
+        {"MOUNT_RETRY_INTERVAL_SECS","30"},
     };
 
     parse_cfg_into(DEFAULT_CFG_FILE, raw); // overlay shipped defaults
@@ -416,6 +420,8 @@ static void load_config() {
     _cfg.pause_on_rsync           = (get("PAUSE_ON_RSYNC")     != "no");
     _cfg.log_file                 = get("LOG_FILE");
     _cfg.log_max_lines            = std::stoi(get("LOG_MAX_LINES"));
+    _cfg.mount_wait_timeout_mins  = std::max(0, std::stoi(get("MOUNT_WAIT_TIMEOUT_MINS")));
+    _cfg.mount_retry_interval_secs= std::max(1, std::stoi(get("MOUNT_RETRY_INTERVAL_SECS")));
     _cfg.exclude_patterns         = split_csv(get("EXCLUDE_PATTERNS"));
 
     load_share_settings();
@@ -456,6 +462,10 @@ static void log_config() {
              " opens / " + std::to_string(_cfg.large_long_window_hours) + " h, min reads filter: " +
              (_cfg.rule3_min_reads == 0 ? std::string("off") : std::to_string(_cfg.rule3_min_reads)));
     if (_cfg.dry_run) log_info("DRY RUN mode - no files will be moved");
+    log_info(_cfg.mount_wait_timeout_mins > 0
+             ? "Mount wait: up to " + std::to_string(_cfg.mount_wait_timeout_mins) +
+               " min, retry every " + std::to_string(_cfg.mount_retry_interval_secs) + " s"
+             : std::string("Mount wait: disabled"));
 
     // Summarise share status: promotable vs skipped (with reason).
     std::vector<std::string> promo, excluded, not_use, no_pool;
@@ -959,6 +969,53 @@ static void maybe_cleanup() {
 // fanotify
 // ---------------------------------------------------------------------------
 
+// A scan path is "ready" only when it is a genuine mount point, not merely an
+// existing directory on rootfs. Marking a non-mounted dir with FAN_MARK_MOUNT
+// would watch the wrong (root) filesystem, so compare its st_dev to its parent's.
+static bool is_mounted(const std::string& path) {
+    struct stat st, parent;
+    if (stat(path.c_str(), &st) != 0)               return false;  // ENOENT = not there yet
+    if (stat((path + "/..").c_str(), &parent) != 0) return false;
+    return st.st_dev != parent.st_dev;                             // differs => mount point
+}
+
+// Wrap a string in single quotes for safe use in a shell command line.
+static std::string sh_squote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) { if (c == '\'') out += "'\\''"; else out += c; }
+    return out + "'";
+}
+
+// Raise an entry in Unraid's notification system. importance: normal|warning|alert.
+// No-op when the notify helper is absent (e.g. dev box / not Unraid).
+static void notify_unraid(const char* importance,
+                          const std::string& subject,
+                          const std::string& description) {
+    static const char* NOTIFY = "/usr/local/emhttp/webGui/scripts/notify";
+    if (access(NOTIFY, X_OK) != 0) return;
+    std::string cmd = std::string(NOTIFY)
+        + " -e 'Unspin' -i " + sh_squote(importance)
+        + " -s " + sh_squote(subject)
+        + " -d " + sh_squote(description)
+        + " > /dev/null 2>&1";
+    if (system(cmd.c_str()) != 0) log_warn("notify failed: " + subject);
+}
+
+// FAN_MARK_MOUNT watches the entire mount that contains this path.
+// Events are then filtered by path prefix in handle_event().
+static bool mark_path(int fd, const std::string& path) {
+    return fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_MOUNT,
+                         FAN_WATCH_MASK, AT_FDCWD, path.c_str()) == 0;
+}
+
+// Block up to `secs` seconds, returning early when a signal is delivered.
+// poll() is never auto-restarted by SA_RESTART on Linux (the reason the main
+// loop's EINTR handling works), so SIGTERM/SIGINT make it return at once; the
+// caller then re-checks _quit. One syscall, instant wakeup.
+static void interruptible_sleep(int secs) {
+    poll(nullptr, 0, secs * 1000);
+}
+
 static int init_fanotify() {
     auto fd = fanotify_init(FAN_CLOEXEC | FAN_CLASS_NOTIF | FAN_NONBLOCK,
                            O_RDONLY | O_LARGEFILE);
@@ -967,17 +1024,59 @@ static int init_fanotify() {
         return -1;
     }
 
+    // First pass: mark every path that is already mounted; collect the rest.
+    std::vector<std::string> pending;
     for (const auto& path : _cfg.scan_paths) {
-        // FAN_MARK_MOUNT watches the entire mount that contains this path.
-        // Events are then filtered by path prefix in handle_event().
-        if (fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_MOUNT,
-                          FAN_WATCH_MASK,
-                          AT_FDCWD, path.c_str()) < 0) {
-            log_warn("fanotify_mark(" + path + "): " + strerror(errno) +
-                     " - mount may not exist yet, skipping");
-        } else {
+        if (is_mounted(path) && mark_path(fd, path))
             log_info("Watching mount at: " + path);
+        else
+            pending.push_back(path);
+    }
+
+    auto join_csv = [](const std::vector<std::string>& v) {
+        std::string s; for (const auto& x : v) { if (!s.empty()) s += ", "; s += x; } return s;
+    };
+
+    if (pending.empty())
+        return fd;
+
+    // Slow boots (arrays/pools can take 20-30 min) mean a scan path may not be
+    // mounted yet. Wait for it rather than silently watching nothing.
+    if (_cfg.mount_wait_timeout_mins > 0) {
+        auto deadline = time(nullptr) + (time_t)_cfg.mount_wait_timeout_mins * 60;
+        log_warn("Waiting for unmounted scan paths: " + join_csv(pending));
+        notify_unraid("warning", "Unspin waiting for storage",
+                      "Waiting up to " + std::to_string(_cfg.mount_wait_timeout_mins) +
+                      " min for: " + join_csv(pending) +
+                      ". Tiering is paused until these mount.");
+
+        while (!pending.empty() && !_quit && time(nullptr) < deadline) {
+            interruptible_sleep(_cfg.mount_retry_interval_secs);
+            for (auto it = pending.begin(); it != pending.end(); ) {
+                if (is_mounted(*it) && mark_path(fd, *it)) {
+                    log_info("Watching mount at: " + *it + " (after wait)");
+                    it = pending.erase(it);
+                } else {
+                    ++it;
+                }
+            }
         }
+
+        if (pending.empty() && !_quit) {
+            notify_unraid("normal", "Unspin storage ready",
+                          "All scan paths mounted; tiering is active.");
+        } else if (!pending.empty()) {
+            notify_unraid("alert", "Unspin mount wait timed out",
+                          "These scan paths did not mount within " +
+                          std::to_string(_cfg.mount_wait_timeout_mins) + " min: " +
+                          join_csv(pending) + ". Restart Unspin once the array is up.");
+            for (const auto& path : pending)
+                log_err("Timed out waiting for scan path: " + path + " - not watched");
+        }
+    } else {
+        // Mount wait disabled: legacy warn-and-skip behaviour.
+        for (const auto& path : pending)
+            log_warn("fanotify_mark(" + path + "): not mounted - skipping (mount wait disabled)");
     }
 
     return fd;

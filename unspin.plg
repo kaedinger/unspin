@@ -19,6 +19,12 @@
 >
 
 <CHANGES>
+### next
+- fix: on slow boots (arrays/ZFS pools can take 20-30 min to mount) the daemon no longer silently watches nothing when a scan path is not mounted yet - it now waits for each scan path to actually mount before adding the fanotify watch (Fixes GitHub #3)
+- feat: configurable mount wait - MOUNT_WAIT_TIMEOUT_MINS (default 45, 0 disables) and MOUNT_RETRY_INTERVAL_SECS (default 30), exposed on the settings page
+- feat: Unraid notifications - a warning while waiting for storage, a notice when all scan paths mount, and an alert if the wait times out
+- fix: a scan path is now considered ready only when it is a genuine mount point, avoiding accidentally watching the root filesystem
+
 ### 2026.04.29.43847
 - docs: fix plugin title rendering in README (broken bold markdown)
 

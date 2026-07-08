@@ -142,6 +142,8 @@ if ($action === 'save') {
     $k = 'RULE3_ENABLED';            $cfg[$k] = $yn($k);
     $k = 'RULE3_MIN_READS';          $cfg[$k] = $pint($k, 0);
     $k = 'PAUSE_ON_RSYNC';          $cfg[$k] = $yn($k);
+    $k = 'MOUNT_WAIT_TIMEOUT_MINS';   $cfg[$k] = $pint($k, 0);
+    $k = 'MOUNT_RETRY_INTERVAL_SECS'; $cfg[$k] = $pint($k, 1);
     save_cfg($cfg_file, $cfg);
     $saved_cfg = $cfg;
 

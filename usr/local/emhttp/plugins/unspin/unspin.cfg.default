@@ -50,3 +50,9 @@ DRY_RUN="yes"
 
 # Log verbosity (info/debug)
 LOG_LEVEL="info"
+
+# Wait for slow-mounting arrays/pools before watching (boot race).
+# Max minutes to wait for each scan path to mount (0 = don't wait, skip immediately).
+MOUNT_WAIT_TIMEOUT_MINS="45"
+# Seconds between mount re-checks while waiting.
+MOUNT_RETRY_INTERVAL_SECS="30"
