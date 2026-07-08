@@ -46,6 +46,13 @@ function opt($val, $current, $label) {
     return "<option value=\"" . htmlspecialchars($val) . "\"$sel>" . htmlspecialchars($label) . "</option>";
 }
 
+// The owning disk is already shown as the panel heading - drop its redundant
+// "/mnt/diskN" prefix from each row's path.
+function strip_disk_prefix($path, $disk) {
+    return substr($path, strlen($disk));
+}
+
+
 // Parse /boot/config/shares/*.cfg -> ['share' => ['use_cache'=>..,'cache_pool'=>..]].
 // Mirrors load_shares() in exec.php; duplicated to keep the page render self-contained.
 function unspin_load_shares() {
@@ -93,9 +100,15 @@ if (is_dir($pause_dir)) {
 $is_paused = count($pause_locks) > 0;
 $pause_label = $is_paused ? ' (Paused: ' . htmlspecialchars(implode(', ', $pause_locks)) . ')' : '';
 
-$log_lines = '';
-if (file_exists($log_file)) {
-    $log_lines = htmlspecialchars(implode('', array_slice(file($log_file), -200)));
+require_once __DIR__ . '/include/log_scan.php';
+$log_lines_raw = log_tail_lines($log_file, 200);
+$log_lines     = htmlspecialchars($log_lines_raw);
+
+$recent_offset = 0;
+$recent_lists  = [];
+if (($c['LOG_LEVEL'] ?? '') === 'debug') {
+    $scan_paths = array_values(array_filter(array_map('trim', explode(',', $c['SCAN_PATHS'] ?? ''))));
+    [$recent_lists, $recent_offset] = log_scan_full($log_file, $scan_paths);
 }
 
 // Detected shares + excluded set for the Detected Shares table.
@@ -230,6 +243,39 @@ dt.hf-share-name {
   gap: 10px;
 }
 .hf-share-head { font-weight: bold; opacity: 0.75; }
+
+/* Shared panel border - used by the recent-files panels and the log textarea */
+.hf-bordered {
+  border: 1px solid rgba(128,128,128,0.35);
+  border-radius: 4px;
+}
+
+/* Recently Accessed Files panel */
+.recent-disk {
+  padding: 8px 10px;
+  min-width: 0;
+}
+.recent-disk-title {
+  font-family: monospace;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+.recent-table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 0.85em;
+  border-collapse: collapse;
+}
+.recent-table tr:nth-child(even) {
+  background: rgba(128,128,128,0.08);
+}
+.recent-path {
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.recent-col { width: 70px; white-space: nowrap; }
+.recent-col-skip { width: 140px; white-space: nowrap; }
 </style>
 
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
@@ -274,6 +320,37 @@ dt.hf-share-name {
       <?= opt('info',  $c['LOG_LEVEL'], 'Info') ?>
       <?= opt('debug', $c['LOG_LEVEL'], 'Debug (verbose - logs every access with counts)') ?>
     </select>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Include excluded shares in Debug log</dt>
+  <dd>
+    <select name="LOG_EXCLUDED_SHARES" id="hf_LOG_EXCLUDED_SHARES">
+      <?= opt('no',  $c['LOG_EXCLUDED_SHARES'] ?? 'no', 'No') ?>
+      <?= opt('yes', $c['LOG_EXCLUDED_SHARES'] ?? 'no', 'Yes') ?>
+    </select>
+    <div class="hf-help">On Debug logging, also log every access to excluded/non-cached shares. A noisy excluded share (e.g. a download folder) can otherwise flood the log and crowd out the "Recently Accessed Files" history for other shares. Only enable this temporarily if you want to check whether an excluded share is actually hot enough to reconsider. <strong>Default: No.</strong></div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Log Max Size</dt>
+  <dd>
+    <div class="hf-row">
+      <input type="number" id="hf_LOG_MAX_SIZE_MB" name="LOG_MAX_SIZE_MB" min="1"
+        value="<?= htmlspecialchars($c['LOG_MAX_SIZE_MB'] ?? '64') ?>" style="width:6em">
+      <span>MB</span>
+      <span class="hf-reset" onclick="hfReset('LOG_MAX_SIZE_MB')" title="Reset to default">&#x21ba;</span>
+    </div>
+    <div class="hf-help">The log file is trimmed once it exceeds this size (see Log Trim Size below). Checked continuously (throttled to once per minute), so the log can't balloon unbounded between checks. <strong>Default: 64.</strong></div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Log Trim Size</dt>
+  <dd>
+    <div class="hf-row">
+      <input type="number" id="hf_LOG_TRIM_SIZE_MB" name="LOG_TRIM_SIZE_MB" min="1"
+        value="<?= htmlspecialchars($c['LOG_TRIM_SIZE_MB'] ?? '5') ?>" style="width:6em">
+      <span>MB</span>
+      <span class="hf-reset" onclick="hfReset('LOG_TRIM_SIZE_MB')" title="Reset to default">&#x21ba;</span>
+    </div>
+    <div class="hf-help">Once Log Max Size is exceeded, the log is trimmed down to this size (whole lines kept, oldest dropped first). <strong>Default: 5.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pause on rsync</dt>
@@ -535,12 +612,46 @@ dt.hf-share-name {
 
 <br>
 
+<?php if (($c['LOG_LEVEL'] ?? '') === 'debug'): ?>
+<div id="recent-panel" style="margin-bottom:12px;">
+  <strong style="display:block;margin-bottom:10px;">5 Recently Accessed Files</strong>
+  <div id="recent-disks" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+<?php foreach ($recent_lists as $disk => $entries): ?>
+    <div class="recent-disk hf-bordered" data-disk="<?= htmlspecialchars($disk) ?>">
+      <div class="recent-disk-title"><?= htmlspecialchars($disk) ?></div>
+      <table class="recent-table">
+        <tbody>
+<?php foreach ($entries as $e): ?>
+          <tr data-type="<?= htmlspecialchars($e['type']) ?>">
+            <td class="recent-path" data-full="<?= htmlspecialchars(strip_disk_prefix($e['path'], $disk)) ?>" title="<?= htmlspecialchars($e['path']) ?>"><?= htmlspecialchars(strip_disk_prefix($e['path'], $disk)) ?></td>
+<?php if ($e['type'] === 'access'): ?>
+            <td class="recent-col"><?= (int)$e['reads'] ?> reads</td>
+            <td class="recent-col"><?= $e['promoted'] ? 'Promoted' : 'Not yet' ?></td>
+<?php else: ?>
+            <td class="recent-col-skip" colspan="2">Skipped</td>
+<?php endif; ?>
+          </tr>
+<?php endforeach; ?>
+<?php if (empty($entries)): ?>
+          <tr><td style="color:#888;">No activity yet.</td></tr>
+<?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+<?php endforeach; ?>
+  </div>
+  <label style="display:block;margin-top:8px;">
+    <input type="checkbox" id="hf-exclude-skipped"> Exclude skipped shares
+  </label>
+</div>
+<?php endif; ?>
+
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-  <strong>Activity Log</strong>
+  <strong style="margin-bottom: -26px;">Activity Log</strong>
   <input type="button" value="Clear Log" onclick="hfClearLog()">
 </div>
-<textarea id="log-box" readonly rows="18"
-  style="width:100%;font-family:monospace;font-size:0.8em;resize:vertical;"><?= $log_lines ?: 'No log entries yet.' ?></textarea>
+<textarea id="log-box" class="hf-bordered" readonly rows="18"
+  style="width:100%;font-family:monospace;font-size:0.8em;resize:vertical;box-sizing:border-box;appearance:none;-webkit-appearance:none;"><?= $log_lines ?: 'No log entries yet.' ?></textarea>
 
 <div class="hf-footer">
   Made with ♥ by
@@ -559,14 +670,104 @@ dt.hf-share-name {
 
 <script>
 var HF_DEFAULTS = <?= json_encode($defaults) ?>;
+var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_encode($recent_lists) ?> };
 (function () {
   var EXEC = '/plugins/unspin/include/exec.php';
 
-  var applyBtn = document.getElementById('hf-apply-btn');
-  var msgEl    = document.getElementById('hf-message');
-  var lb       = document.getElementById('log-box');
+  var applyBtn  = document.getElementById('hf-apply-btn');
+  var msgEl     = document.getElementById('hf-message');
+  var lb        = document.getElementById('log-box');
+  var skipCb    = document.getElementById('hf-exclude-skipped');
+  var rawLog    = <?= json_encode($log_lines_raw) ?>;
 
   if (lb) lb.scrollTop = lb.scrollHeight;
+
+  function filteredLog() {
+    if (!skipCb || !skipCb.checked) return rawLog;
+    return rawLog.split('\n').filter(function (l) {
+      return l.indexOf('[skip share]') === -1;
+    }).join('\n');
+  }
+
+  // Hidden element used purely to measure text width in the exact font the
+  // path cells use, so truncation matches the actual available space instead
+  // of guessing a fixed character count.
+  var measureSpan = document.createElement('span');
+  measureSpan.style.position   = 'absolute';
+  measureSpan.style.visibility = 'hidden';
+  measureSpan.style.whiteSpace = 'pre';
+  measureSpan.style.left       = '-9999px';
+  document.body.appendChild(measureSpan);
+
+  function textWidth(str, font) {
+    measureSpan.style.font = font;
+    measureSpan.textContent = str;
+    return measureSpan.offsetWidth;
+  }
+
+  function fitMiddleEllipsis(str, availablePx, font) {
+    if (textWidth(str, font) <= availablePx) return str;
+    var lo = 0, hi = str.length, best = '…';
+    while (lo <= hi) {
+      var mid = Math.floor((lo + hi) / 2);
+      var head = Math.ceil(mid / 2);
+      var tail = mid - head;
+      var candidate = str.slice(0, head) + '…' + str.slice(str.length - tail);
+      if (textWidth(candidate, font) <= availablePx) { best = candidate; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    return best;
+  }
+
+  // Re-fit every path cell's displayed text to its actual rendered width.
+  function fitRecentPaths() {
+    document.querySelectorAll('#recent-disks td.recent-path[data-full]').forEach(function (td) {
+      var full = td.getAttribute('data-full');
+      var font = getComputedStyle(td).font;
+      td.textContent = fitMiddleEllipsis(full, td.clientWidth - 4, font);
+    });
+  }
+
+  function renderRecent(lists) {
+    var container = document.getElementById('recent-disks');
+    if (!container || !lists) return;
+    var html = '';
+    Object.keys(lists).forEach(function (disk) {
+      var entries = lists[disk];
+      html += '<div class="recent-disk hf-bordered" data-disk="' + disk.replace(/</g, '&lt;') + '">';
+      html += '<div class="recent-disk-title">' + disk.replace(/</g, '&lt;') + '</div>';
+      html += '<table class="recent-table"><tbody>';
+      if (!entries.length) {
+        html += '<tr><td style="color:#888;">No activity yet.</td></tr>';
+      }
+      entries.forEach(function (e) {
+        var rel = e.path.indexOf(disk) === 0 ? e.path.slice(disk.length) : e.path;
+        var relEsc  = rel.replace(/</g, '&lt;');
+        var fullEsc = e.path.replace(/</g, '&lt;');
+        html += '<tr data-type="' + e.type + '"' + (e.type === 'skip' && skipCb && skipCb.checked ? ' style="display:none;"' : '') + '>';
+        html += '<td class="recent-path" data-full="' + relEsc + '" title="' + fullEsc + '">' + relEsc + '</td>';
+        if (e.type === 'access') {
+          html += '<td class="recent-col">' + e.reads + ' reads</td>';
+          html += '<td class="recent-col">' + (e.promoted ? 'Promoted' : 'Not yet') + '</td>';
+        } else {
+          html += '<td class="recent-col-skip" colspan="2">Skipped</td>';
+        }
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+    });
+    container.innerHTML = html;
+    fitRecentPaths();
+  }
+
+  function applySkipFilter() {
+    updateLog(filteredLog());
+    document.querySelectorAll('.recent-table tr[data-type="skip"]').forEach(function (tr) {
+      tr.style.display = (skipCb && skipCb.checked) ? 'none' : '';
+    });
+  }
+
+  if (skipCb) skipCb.addEventListener('change', applySkipFilter);
 
   document.querySelectorAll('[id^="hf_"]').forEach(function (el) {
     el.addEventListener('change', function () { applyBtn.disabled = false; });
@@ -634,11 +835,27 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
     if (atBottom) lb.scrollTop = lb.scrollHeight;
   }
 
+  function pollData() {
+    return { action: 'poll', log_offset: HF_RECENT.offset, log_lists: JSON.stringify(HF_RECENT.lists) };
+  }
+
+  // Shared handling for every poll response: refresh the log (respecting the
+  // skip-share filter) and the condensed recent-files panel.
+  function applyPollResult(r) {
+    rawLog = r.log || '';
+    updateLog(filteredLog());
+    if (r.recent) {
+      HF_RECENT = r.recent;
+      renderRecent(HF_RECENT.lists);
+    }
+  }
+
   var fields = ['SERVICE','SCAN_PATHS',
                 'SMALL_FILE_THRESHOLD','SMALL_MIN_ACCESSES',
                 'LARGE_SHORT_MIN_ACCESSES','LARGE_SHORT_WINDOW_MINS',
                 'LARGE_LONG_MIN_ACCESSES','LARGE_LONG_WINDOW_HOURS',
-                'EXCLUDE_PATTERNS','DRY_RUN','LOG_LEVEL','PAUSE_ON_RSYNC',
+                'EXCLUDE_PATTERNS','DRY_RUN','LOG_LEVEL','LOG_EXCLUDED_SHARES',
+                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC',
                 'MOUNT_WAIT_TIMEOUT_MINS','MOUNT_RETRY_INTERVAL_SECS',
                 'RULE1_ENABLED','RULE1_FALLTHROUGH','RULE2_ENABLED','RULE3_ENABLED',
                 'RULE3_MIN_READS'];
@@ -676,9 +893,9 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
       applyBtn.innerHTML = 'Apply';
       // Delayed poll to re-enable toggle button once daemon has restarted/stopped
       setTimeout(function () {
-        hfPost({ action: 'poll' }, function (pr) {
+        hfPost(pollData(), function (pr) {
           updateStatus(pr.running, pr.paused, pr.pause_locks);
-          updateLog(pr.log);
+          applyPollResult(pr);
         });
       }, 3000);
     });
@@ -691,9 +908,9 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
     hfPost({ action: running ? 'stop' : 'start' }, function (r) {
       showMsg(r.message, r.ok);
       setTimeout(function () {
-        hfPost({ action: 'poll' }, function (pr) {
+        hfPost(pollData(), function (pr) {
           updateStatus(pr.running, pr.paused, pr.pause_locks);
-          updateLog(pr.log);
+          applyPollResult(pr);
         });
       }, 3000);
     });
@@ -743,10 +960,17 @@ var HF_DEFAULTS = <?= json_encode($defaults) ?>;
   };
 
   setInterval(function () {
-    hfPost({ action: 'poll' }, function (r) {
+    hfPost(pollData(), function (r) {
       updateStatus(r.running, r.paused, r.pause_locks);
-      updateLog(r.log);
+      applyPollResult(r);
     });
   }, 10000);
+
+  fitRecentPaths();
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(fitRecentPaths, 150);
+  });
 }());
 </script>

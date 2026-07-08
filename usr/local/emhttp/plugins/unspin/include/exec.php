@@ -136,6 +136,9 @@ if ($action === 'save') {
     $k = 'EXCLUDE_PATTERNS';         $cfg[$k] = trim($_POST[$k] ?? '');
     $k = 'DRY_RUN';                  $cfg[$k] = $yn($k);
     $k = 'LOG_LEVEL';                $cfg[$k] = $enum($k, ['info','debug']);
+    $k = 'LOG_EXCLUDED_SHARES';      $cfg[$k] = $yn($k);
+    $k = 'LOG_MAX_SIZE_MB';          $cfg[$k] = $pint($k);
+    $k = 'LOG_TRIM_SIZE_MB';         $cfg[$k] = $pint($k);
     $k = 'RULE1_ENABLED';            $cfg[$k] = $yn($k);
     $k = 'RULE1_FALLTHROUGH';        $cfg[$k] = $yn($k);
     $k = 'RULE2_ENABLED';            $cfg[$k] = $yn($k);
@@ -187,10 +190,8 @@ if ($action === 'save') {
     exit;
 
 } elseif ($action === 'poll') {
-    $log_lines = '';
-    if (file_exists($log_file)) {
-        $log_lines = implode('', array_slice(file($log_file), -200));
-    }
+    require_once __DIR__ . '/log_scan.php';
+    $log_lines = log_tail_lines($log_file, 200);
     $pause_dir = '/var/run/unspind.pause.d';
     $pause_locks = [];
     if (is_dir($pause_dir)) {
@@ -198,12 +199,30 @@ if ($action === 'save') {
             if ($f !== '.' && $f !== '..') $pause_locks[] = $f;
         }
     }
+
+    $recent = null;
+    $poll_cfg = load_cfg($cfg_file);
+    if (($poll_cfg['LOG_LEVEL'] ?? '') === 'debug') {
+        $scan_paths = array_values(array_filter(array_map('trim',
+            explode(',', $poll_cfg['SCAN_PATHS'] ?? ''))));
+        $offset     = isset($_POST['log_offset']) ? (int)$_POST['log_offset'] : null;
+        $prev_lists = isset($_POST['log_lists']) ? json_decode($_POST['log_lists'], true) : null;
+
+        if ($offset !== null && is_array($prev_lists)) {
+            [$lists, $offset] = log_scan_incremental($log_file, $offset, $scan_paths, $prev_lists);
+        } else {
+            [$lists, $offset] = log_scan_full($log_file, $scan_paths);
+        }
+        $recent = ['offset' => $offset, 'lists' => $lists];
+    }
+
     echo json_encode([
         'ok'      => true,
         'running' => daemon_running($pid_file),
         'paused'  => count($pause_locks) > 0,
         'pause_locks' => $pause_locks,
         'log'     => $log_lines,
+        'recent'  => $recent,
     ]);
     exit;
 

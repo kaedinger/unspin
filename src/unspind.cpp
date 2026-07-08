@@ -87,6 +87,7 @@ struct Config {
     std::string              log_file                  = "/var/log/unspin.log";
     long                     log_max_size_mb           = 64;   // trim once the log exceeds this size
     long                     log_trim_size_mb          = 5;    // trim down to this size (whole lines kept)
+    bool                     log_excluded_shares       = false; // debug-log [skip share] events (off by default - can flood the log)
     int                      mount_wait_timeout_mins   = 45;   // wait this long for scan paths to mount (0 = don't wait)
     int                      mount_retry_interval_secs = 30;   // seconds between mount re-checks while waiting
     std::vector<std::string> exclude_patterns;
@@ -165,6 +166,24 @@ static void log_info (const std::string& m) { vlog("INFO ", m); }
 static void log_warn (const std::string& m) { vlog("WARN ", m); }
 static void log_err  (const std::string& m) { vlog("ERROR", m); }
 static void log_debug(const std::string& m) { if (_cfg.debug) vlog("DEBUG", m); }
+
+// Trailing tag parsed by the settings page to build the condensed
+// "recently accessed" panel without a separate daemon->PHP status channel.
+static std::string access_tag(int total_reads, bool promoted) {
+    return " reads=" + std::to_string(total_reads) + " promoted=" + (promoted ? "yes" : "no");
+}
+
+// Quote a path for log lines so the settings page can reliably extract it even
+// when the path itself contains spaces (e.g. torrent downloads) - still plain,
+// human-readable text, just delimited.
+static std::string qpath(const std::string& path) {
+    std::string out;
+    out.reserve(path.size() + 2);
+    out += '"';
+    for (char c : path) { if (c == '"') out += '\\'; out += c; }
+    out += '"';
+    return out;
+}
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -374,6 +393,7 @@ static void load_config() {
         {"LOG_FILE",                 "/var/log/unspin.log"},
         {"LOG_MAX_SIZE_MB",          "64"},
         {"LOG_TRIM_SIZE_MB",         "5"},
+        {"LOG_EXCLUDED_SHARES",      "no"},
         {"MOUNT_WAIT_TIMEOUT_MINS",  "45"},
         {"MOUNT_RETRY_INTERVAL_SECS","30"},
     };
@@ -432,6 +452,7 @@ static void load_config() {
     _cfg.log_file                 = get("LOG_FILE");
     _cfg.log_max_size_mb          = std::stol(get("LOG_MAX_SIZE_MB"));
     _cfg.log_trim_size_mb         = std::stol(get("LOG_TRIM_SIZE_MB"));
+    _cfg.log_excluded_shares      = (get("LOG_EXCLUDED_SHARES") == "yes");
     _cfg.mount_wait_timeout_mins  = std::max(0, std::stoi(get("MOUNT_WAIT_TIMEOUT_MINS")));
     _cfg.mount_retry_interval_secs= std::max(1, std::stoi(get("MOUNT_RETRY_INTERVAL_SECS")));
     _cfg.exclude_patterns         = split_csv(get("EXCLUDE_PATTERNS"));
@@ -626,17 +647,18 @@ static bool copy_file(const std::string& src, const std::string& dst) {
 }
 
 static bool promote_file(const std::string& src, int64_t size,
-                         const PromoteDecision& dec) {
+                         const PromoteDecision& dec, int total_reads) {
     auto dst = resolve_destination(src);
+    auto tag = access_tag(total_reads, true);
 
     if (_cfg.dry_run) {
         log_info("[" + dec.rule + "] [DRY RUN] Would promote " +
-                 src + " -> " + dst + " (" + human_size(size) + ") - " + dec.reason);
+                 qpath(src) + " -> " + dst + " (" + human_size(size) + ") - " + dec.reason + tag);
         return true;
     }
 
-    log_info("[" + dec.rule + "] Promoting " + src + " -> " + dst +
-             " (" + human_size(size) + ") - " + dec.reason);
+    log_info("[" + dec.rule + "] Promoting " + qpath(src) + " -> " + dst +
+             " (" + human_size(size) + ") - " + dec.reason + tag);
 
     if (!copy_file(src, dst)) return false;
 
@@ -758,7 +780,7 @@ static void handle_event(const std::string& path, EvType ev) {
     // Share must be promotable (use_cache=yes|prefer, has pool, not user-excluded)
     auto sname = path_share_name(path);
     if (sname.empty() || !share_promotable(sname)) {
-        log_debug("[skip share] " + path);
+        if (_cfg.log_excluded_shares) log_debug("[skip share] " + qpath(path));
         return;
     }
 
@@ -795,7 +817,7 @@ static void handle_event(const std::string& path, EvType ev) {
         auto dst = resolve_destination(path);
         if (access(dst.c_str(), F_OK) == 0) {
             if (ev == EvType::Read || ev == EvType::Open)
-                log_debug("[already hot] " + path);
+                log_debug("[already hot] " + qpath(path) + access_tag(rec.total_reads, true));
             return;
         }
         // Hot copy is gone
@@ -829,7 +851,7 @@ static void handle_event(const std::string& path, EvType ev) {
             else             { log_debug(msg); }
             return;
         }
-        if (promote_file(path, size, dec))
+        if (promote_file(path, size, dec, rec.total_reads))
             rec.promoted = true;
     };
 
@@ -865,8 +887,9 @@ static void handle_event(const std::string& path, EvType ev) {
         rec.read_timestamps.push_back(now);
         if (rec.open_reads >= 0) rec.open_reads++;
         auto dec = should_promote(rec, size);
-        log_debug("Read #" + std::to_string(rec.total_reads) + " " + path +
-                  " (" + human_size(size) + ") - " + dec.reason);
+        log_debug("Read #" + std::to_string(rec.total_reads) + " " + qpath(path) +
+                  " (" + human_size(size) + ") - " + dec.reason +
+                  access_tag(rec.total_reads, false));
         evaluate();
 
     } else if (ev == EvType::Open) {
@@ -877,11 +900,13 @@ static void handle_event(const std::string& path, EvType ev) {
             // Filter disabled - count immediately
             rec.open_timestamps.push_back(now);
             auto dec = should_promote(rec, size);
-            log_debug("Open " + path + " (" + human_size(size) + ") - " + dec.reason);
+            log_debug("Open " + qpath(path) + " (" + human_size(size) + ") - " + dec.reason +
+                      access_tag(rec.total_reads, false));
             evaluate();
         } else {
             log_debug("Open (pending, min reads: " + std::to_string(_cfg.rule3_min_reads) +
-                      ") " + path + " (" + human_size(size) + ")");
+                      ") " + qpath(path) + " (" + human_size(size) + ")" +
+                      access_tag(rec.total_reads, false));
         }
 
     } else { // CloseNoWrite or CloseWrite
