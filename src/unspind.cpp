@@ -85,7 +85,8 @@ struct Config {
     int                      rule3_min_reads           = 6;    // thumbnail filter: skip opens with 1..N-1 reads (0=disabled)
     bool                     pause_on_rsync            = true; // pause event counting while any rsync process is running
     std::string              log_file                  = "/var/log/unspin.log";
-    int                      log_max_lines             = 3000;
+    long                     log_max_size_mb           = 64;   // trim once the log exceeds this size
+    long                     log_trim_size_mb          = 5;    // trim down to this size (whole lines kept)
     int                      mount_wait_timeout_mins   = 45;   // wait this long for scan paths to mount (0 = don't wait)
     int                      mount_retry_interval_secs = 30;   // seconds between mount re-checks while waiting
     std::vector<std::string> exclude_patterns;
@@ -128,6 +129,7 @@ static std::unordered_map<std::string, AccessRecord> _access_map;
 static std::unordered_map<std::string, ShareInfo>    _shares;  // share name -> info
 static std::unordered_map<std::string, PoolInfo>     _pools;   // pool name  -> info
 static time_t      _last_cleanup     = 0;
+static time_t      _last_log_size_check = 0;
 static std::unordered_map<std::string, std::string> _last_pool_full_msg; // per-pool suppression
 static bool        _transfers_cached  = false;
 static time_t      _transfers_checked = 0;
@@ -139,6 +141,9 @@ static gid_t       _nobody_gid       = 100;
 // ---------------------------------------------------------------------------
 
 static std::ofstream _log_stream;
+static constexpr int LOG_SIZE_CHECK_INTERVAL_SEC = 60;
+
+static void trim_log(); // defined below; checks/trims the log by size
 
 static void vlog(const char* level, const std::string& msg) {
     auto now = time(nullptr);
@@ -149,6 +154,11 @@ static void vlog(const char* level, const std::string& msg) {
     std::ostream& out = _log_stream.is_open() ? _log_stream : std::cout;
     out << ts << " [" << level << "] " << msg << "\n";
     out.flush();
+
+    if (now - _last_log_size_check >= LOG_SIZE_CHECK_INTERVAL_SEC) {
+        _last_log_size_check = now;
+        trim_log();
+    }
 }
 
 static void log_info (const std::string& m) { vlog("INFO ", m); }
@@ -362,7 +372,8 @@ static void load_config() {
         {"PAUSE_ON_RSYNC",           "yes"},
         {"EXCLUDE_PATTERNS",         "/nevercachethis,/orthis"},
         {"LOG_FILE",                 "/var/log/unspin.log"},
-        {"LOG_MAX_LINES",            "3000"},
+        {"LOG_MAX_SIZE_MB",          "64"},
+        {"LOG_TRIM_SIZE_MB",         "5"},
         {"MOUNT_WAIT_TIMEOUT_MINS",  "45"},
         {"MOUNT_RETRY_INTERVAL_SECS","30"},
     };
@@ -419,7 +430,8 @@ static void load_config() {
     _cfg.rule3_min_reads          = std::max(0, std::stoi(get("RULE3_MIN_READS")));
     _cfg.pause_on_rsync           = (get("PAUSE_ON_RSYNC")     != "no");
     _cfg.log_file                 = get("LOG_FILE");
-    _cfg.log_max_lines            = std::stoi(get("LOG_MAX_LINES"));
+    _cfg.log_max_size_mb          = std::stol(get("LOG_MAX_SIZE_MB"));
+    _cfg.log_trim_size_mb         = std::stol(get("LOG_TRIM_SIZE_MB"));
     _cfg.mount_wait_timeout_mins  = std::max(0, std::stoi(get("MOUNT_WAIT_TIMEOUT_MINS")));
     _cfg.mount_retry_interval_secs= std::max(1, std::stoi(get("MOUNT_RETRY_INTERVAL_SECS")));
     _cfg.exclude_patterns         = split_csv(get("EXCLUDE_PATTERNS"));
@@ -922,7 +934,11 @@ static void handle_event(const std::string& path, EvType ev) {
 
 static void trim_log() {
     const auto& path = _cfg.log_file;
-    const auto max = _cfg.log_max_lines;
+
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return;
+    const long max_bytes = _cfg.log_max_size_mb * 1024L * 1024L;
+    if ((long)st.st_size <= max_bytes) return;
 
     std::vector<std::string> lines;
     {
@@ -931,17 +947,26 @@ static void trim_log() {
         std::string line;
         while (std::getline(in, line)) lines.push_back(std::move(line));
     }
-    if ((int)lines.size() <= max) return;
+
+    // Keep whole lines from the end, up to log_trim_size_mb.
+    const long trim_bytes = _cfg.log_trim_size_mb * 1024L * 1024L;
+    long kept_bytes = 0;
+    auto start = lines.size();
+    while (start > 0) {
+        long line_bytes = (long)lines[start - 1].size() + 1; // +1 for newline
+        if (kept_bytes + line_bytes > trim_bytes) break;
+        kept_bytes += line_bytes;
+        --start;
+    }
 
     _log_stream.close();
     {
         std::ofstream out(path, std::ios::trunc);
-        auto start = (int)lines.size() - max;
-        for (auto i = start; i < (int)lines.size(); ++i)
+        for (auto i = start; i < lines.size(); ++i)
             out << lines[i] << '\n';
     }
     _log_stream.open(path, std::ios::app);
-    log_info("Log trimmed to " + std::to_string(max) + " lines.");
+    log_info("Log trimmed to " + std::to_string(_cfg.log_trim_size_mb) + " MB.");
 }
 
 static void maybe_cleanup() {
@@ -962,7 +987,6 @@ static void maybe_cleanup() {
 
     log_info("Access map cleanup: " + std::to_string(before) + " -> " +
              std::to_string(_access_map.size()) + " entries");
-    trim_log();
 }
 
 // ---------------------------------------------------------------------------

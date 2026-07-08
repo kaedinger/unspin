@@ -51,6 +51,10 @@ DRY_RUN="yes"
 # Log verbosity (info/debug)
 LOG_LEVEL="info"
 
+# Log file is trimmed once it exceeds this size, down to LOG_TRIM_SIZE_MB (whole lines kept).
+LOG_MAX_SIZE_MB="64"
+LOG_TRIM_SIZE_MB="5"
+
 # Wait for slow-mounting arrays/pools before watching (boot race).
 # Max minutes to wait for each scan path to mount (0 = don't wait, skip immediately).
 MOUNT_WAIT_TIMEOUT_MINS="45"
