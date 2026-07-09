@@ -1,7 +1,7 @@
 <?php
-/* Unspin - condense the activity log into a "last accessed files per
- * watched disk" view, without any daemon-side status channel. Shared
- * between Unspin.php (initial render) and exec.php (poll updates).
+/* Condense the activity log into a "last accessed files per
+ * watched disk" view. Shared between Unspin.php (initial render) 
+ * and exec.php (poll updates).
  *
  * Log lines this relies on (see src/unspind.cpp):
  *   - access events (Read/Open/[already hot]/Promoting/[DRY RUN]) end in
@@ -17,6 +17,7 @@ const UNSPIN_CHUNK_BYTES = 65536;
 // whole file (replaces the old `array_slice(file($log_file), -200)`, which
 // could exceed PHP's memory limit on a large log despite the daemon's own
 // size-based trim, since file() materializes every line as a PHP string).
+// (Ask me how I know)
 function log_tail_lines($log_file, $n) {
     if (!file_exists($log_file)) return '';
     $fh = fopen($log_file, 'rb');
@@ -43,7 +44,7 @@ function log_tail_lines($log_file, $n) {
     return implode("\n", array_reverse($lines)) . "\n";
 }
 
-// Paths are wrapped in "..." by the daemon (qpath() in src/unspind.cpp) so
+// Paths are wrapped in double quotes by the daemon (qpath() in src/unspind.cpp) so
 // they can contain spaces/parens - match the quoted string, not \S*.
 function log_scan_match_disk($line, $scan_paths) {
     foreach ($scan_paths as $disk) {
@@ -84,7 +85,7 @@ function log_scan_classify($line, $scan_paths) {
 // Keep at most UNSPIN_ACCESS_CAP DISTINCT-path access entries and
 // UNSPIN_SKIP_CAP distinct-path skip entries per disk, preserving order
 // (most-recent-first). A file read/skipped repeatedly must only occupy one
-// slot - its most recent occurrence, since that's first in scan order.
+// slot (the most recent occurrence)
 function log_scan_apply_caps($lists) {
     $out = [];
     foreach ($lists as $disk => $entries) {
@@ -120,9 +121,7 @@ function log_scan_full($log_file, $scan_paths) {
     $filesize = filesize($log_file);
     $pos      = $filesize;
     $leftover = '';
-    // Tracks DISTINCT paths seen per disk so a single hot file being read (or
-    // skipped) repeatedly doesn't satisfy the cap without 5 different files
-    // found, and doesn't pile up unbounded duplicate entries while scanning.
+    // Tracks distinct paths seen per disk
     $access_seen = array_fill_keys($scan_paths, []);
     $skip_seen   = array_fill_keys($scan_paths, []);
 

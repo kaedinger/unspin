@@ -49,7 +49,7 @@ unspin_stop() {
             sleep 1
         done
     fi
-    # Catch orphans not tracked by the pidfile (e.g. left over from a prior install).
+    # Catch orphans not tracked by the pidfile (left over from a prior install?).
     if pgrep -fx "$DAEMON" >/dev/null 2>&1; then
         echo "Killing orphan unspind processes: $(pgrep -fx "$DAEMON" | tr '\n' ' ')"
         pkill -fx "$DAEMON"

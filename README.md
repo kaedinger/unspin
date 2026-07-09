@@ -36,7 +36,7 @@ Make sure this does what you want! There's a dry-run mode; use it!
 
 Promotion is always deferred until all open handles on the file are closed. Unlinking the source while a reader (SMB, NFS, local process) still holds an fd would cause the client to lose the file - shfs does not redirect to the cache copy mid-stream. By waiting for close, the next open transparently picks up the promoted copy.
 
-There's no explicit cold demotion - for now we rely on Unraid's mover.
+There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mover Tuning.
 
 ---
 
@@ -47,7 +47,9 @@ There's no explicit cold demotion - for now we rely on Unraid's mover.
 - **Deferred promotion** - promotion waits until all open handles are closed, so readers never lose their file mid-stream
 - **Per-share cache pool routing** - destinations follow each share's own `shareCachePool` setting in Unraid, so different shares can promote to different pools (e.g. `/mnt/cache` for some, `/mnt/nvme` for others). Shares with `Use Cache: No` or `only` are skipped automatically; shares with `yes` or `prefer` are eligible.
 - **Detected Shares table** - the settings page lists every share with its current routing and a per-share Watch toggle to opt individual shares out without changing Unraid's settings
-- **Mover/rsync-aware** - skips promotion while Unraid's mover (or a local rsync) is running to avoid conflicts
+- **Mover/rsync-aware** - Unraid's mover is always detected and pauses Unspin; other tools that move files via `rsync` (e.g. Unbalanced, or Mover Tuning) can optionally pause it too via `PAUSE_ON_RSYNC` - if you use Mover Tuning, make sure this is enabled!
+- **Mount-wait on boot** - waits for slow-mounting arrays/pools before watching a scan path; posts an Unraid notification if it has to wait, and another if the wait times out
+- **Recently Accessed Files panel** - on debug logging, the settings page shows the last 5 accessed files per disk (read count, promoted state) plus skipped-share hits, scraped from the log itself
 - **Per-pool fill guard** - each pool gets its own fill % threshold; promotion to that pool stops once it's exceeded
 - **Dry-run mode** - logs every decision without moving anything
 - **Exclude patterns** - skip any path substring
@@ -87,7 +89,11 @@ unspin/
     └── local/
         ├── emhttp/plugins/unspin/
         │   ├── Unspin.page             # Unraid page registration
-        │   ├── Unspin.php              # Settings UI
+        │   ├── Unspin.php              # Settings UI (render)
+        │   ├── include/
+        │   │   ├── exec.php            # POST action handler (save/start/stop/etc.)
+        │   │   ├── cfg.php             # Shared config/share-parsing helpers
+        │   │   └── log_scan.php        # Shared log-tail/scan helpers
         │   └── unspin.cfg.default      # Default config
         └── sbin/
             └── unspind                 # Compiled daemon binary (built by CI)
@@ -115,8 +121,14 @@ unspin/
 | `RULE2_ENABLED` | `yes` | Enable large-file short-window rule |
 | `RULE3_ENABLED` | `yes` | Enable large-file long-window rule |
 | `RULE3_MIN_READS` | `5` | Thumbnail filter: skip opens with fewer reads than this (0 = disabled) |
+| `PAUSE_ON_RSYNC` | `yes` | Also pause while any `rsync` process is running (covers tools like Unbalanced or Mover Tuning's rsync-based transfers). Unraid's mover itself is always detected regardless of this setting. |
 | `DRY_RUN` | `yes` | Log promotion decisions without moving files |
 | `LOG_LEVEL` | `info` | `info` or `debug` |
+| `LOG_EXCLUDED_SHARES` | `no` | On debug logging, also log skipped-share accesses (off by default so a noisy excluded share doesn't crowd out other shares' history) |
+| `LOG_MAX_SIZE_MB` | `64` | Log is trimmed once it exceeds this size |
+| `LOG_TRIM_SIZE_MB` | `5` | Size the log is trimmed down to (whole lines kept) |
+| `MOUNT_WAIT_TIMEOUT_MINS` | `45` | Max minutes to wait for each scan path to mount at boot (0 = don't wait) |
+| `MOUNT_RETRY_INTERVAL_SECS` | `30` | Seconds between mount re-checks while waiting |
 
 ---
 
@@ -199,9 +211,11 @@ If the copy fails, the source is left untouched and the partial destination is d
 
 ## Screenshots
 
-<img src="images/scr1_settings.png" alt="Screenshot: Settings" />
+<img src="images/scr1_settings.png" alt="Screenshot: Settings 1" />
 
-<img src="images/scr2_log.png" alt="Screenshot: Log view" />
+<img src="images/scr2_settings.png" alt="Screenshot: Settings 2" />
+
+<img src="images/scr3_log.png" alt="Screenshot: Log view" />
 
 
 ---

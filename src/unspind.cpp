@@ -1,5 +1,5 @@
-﻿// unspind.cpp - Unspin tiering daemon for Unraid
-// Monitors file accesses via fanotify and promotes hot files to the cache tier.
+﻿// unspind.cpp - Unspin hotfile tiering daemon for Unraid
+// Monitors file accesses via fanotify and promotes hot files to the cache.
 //
 // Compile: g++ -O2 -Wall -o unspind unspind.cpp
 // Requires: Linux kernel 2.6.37+ (fanotify), CAP_SYS_ADMIN (run as root)
@@ -55,7 +55,7 @@ static constexpr const char DEFAULT_CFG_FILE[]   = "/usr/local/emhttp/plugins/un
 static constexpr const char TRIM_CHARS[]         = " \t\r\n";
 // Unraid's per-disk / per-pool mount root. All disks and pools live under this prefix.
 static const     std::string MNT_PREFIX          = "/mnt/";
-// Share mount point - not a real location for Unspin to act on, rejected in SCAN_PATHS validation.
+// Share mount point - fanotify is ambiguous/unreliable here, so rejected in SCAN_PATHS validation.
 static const     std::string SHARE_MNT           = "/mnt/user";
 
 // ---------------------------------------------------------------------------
@@ -82,14 +82,14 @@ struct Config {
     bool                     rule1_fallthrough         = true;  // when rule1 is off, evaluate small files via rules 2+3
     bool                     rule2_enabled             = true;
     bool                     rule3_enabled             = true;
-    int                      rule3_min_reads           = 6;    // thumbnail filter: skip opens with 1..N-1 reads (0=disabled)
-    bool                     pause_on_rsync            = true; // pause event counting while any rsync process is running
+    int                      rule3_min_reads           = 6;     // thumbnail filter: skip opens with 1..N-1 reads (0=disabled)
+    bool                     pause_on_rsync            = true;  // pause event counting while any rsync process is running
     std::string              log_file                  = "/var/log/unspin.log";
-    long                     log_max_size_mb           = 64;   // trim once the log exceeds this size
-    long                     log_trim_size_mb          = 5;    // trim down to this size (whole lines kept)
-    bool                     log_excluded_shares       = false; // debug-log [skip share] events (off by default - can flood the log)
-    int                      mount_wait_timeout_mins   = 45;   // wait this long for scan paths to mount (0 = don't wait)
-    int                      mount_retry_interval_secs = 30;   // seconds between mount re-checks while waiting
+    long                     log_max_size_mb           = 64;    // trim log once it exceeds this size
+    long                     log_trim_size_mb          = 5;     // trim log down to this size
+    bool                     log_excluded_shares       = false; // debug-log [skip share] events (off by default - prevent log flooding)
+    int                      mount_wait_timeout_mins   = 45;    // timeout scan paths to mount (0 = don't wait)
+    int                      mount_retry_interval_secs = 30;    // seconds between mount re-checks while waiting
     std::vector<std::string> exclude_patterns;
 };
 
@@ -167,15 +167,13 @@ static void log_warn (const std::string& m) { vlog("WARN ", m); }
 static void log_err  (const std::string& m) { vlog("ERROR", m); }
 static void log_debug(const std::string& m) { if (_cfg.debug) vlog("DEBUG", m); }
 
-// Trailing tag parsed by the settings page to build the condensed
-// "recently accessed" panel without a separate daemon->PHP status channel.
+// Trailing tag for the "recently accessed" panel
 static std::string access_tag(int total_reads, bool promoted) {
     return " reads=" + std::to_string(total_reads) + " promoted=" + (promoted ? "yes" : "no");
 }
 
-// Quote a path for log lines so the settings page can reliably extract it even
-// when the path itself contains spaces (e.g. torrent downloads) - still plain,
-// human-readable text, just delimited.
+// Quote for paths containing spaces. This is a contract with the log parser
+// in Unspin.php to display recently accessed files!
 static std::string qpath(const std::string& path) {
     std::string out;
     out.reserve(path.size() + 2);
@@ -183,6 +181,43 @@ static std::string qpath(const std::string& path) {
     for (char c : path) { if (c == '"') out += '\\'; out += c; }
     out += '"';
     return out;
+}
+
+static void trim_log() {
+    const auto& path = _cfg.log_file;
+
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return;
+    const long max_bytes = _cfg.log_max_size_mb * 1024L * 1024L;
+    if ((long)st.st_size <= max_bytes) return;
+
+    std::vector<std::string> lines;
+    {
+        std::ifstream in(path);
+        if (!in.is_open()) return;
+        std::string line;
+        while (std::getline(in, line)) lines.push_back(std::move(line));
+    }
+
+    // Keep whole lines from the end, up to log_trim_size_mb.
+    const long trim_bytes = _cfg.log_trim_size_mb * 1024L * 1024L;
+    long kept_bytes = 0;
+    auto start = lines.size();
+    while (start > 0) {
+        long line_bytes = (long)lines[start - 1].size() + 1; // +1 for newline
+        if (kept_bytes + line_bytes > trim_bytes) break;
+        kept_bytes += line_bytes;
+        --start;
+    }
+
+    _log_stream.close();
+    {
+        std::ofstream out(path, std::ios::trunc);
+        for (auto i = start; i < lines.size(); ++i)
+            out << lines[i] << '\n';
+    }
+    _log_stream.open(path, std::ios::app);
+    log_info("Log trimmed to " + std::to_string(_cfg.log_trim_size_mb) + " MB.");
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +264,7 @@ static void init_nobody() {
     } else {
         log_err("getpwnam(\"nobody\") failed - falling back to defaults");
     }
-    log_info("using nobody uid=" + std::to_string(_nobody_uid) + " gid=" + std::to_string(_nobody_gid));
+    log_info("Using nobody uid=" + std::to_string(_nobody_uid) + " gid=" + std::to_string(_nobody_gid));
 }
 
 static void mkdir_p(const std::string& path) {
@@ -268,13 +303,11 @@ static std::string path_share_name(const std::string& path) {
         share_end == std::string::npos ? std::string::npos : share_end - pool_end - 1);
 }
 
-// Forward-declare the generic cfg parser so we can reuse it for share configs;
-// its definition lives further down in the config section.
+// defined in the config section
 static void parse_cfg_into(const std::string& path,
                            std::unordered_map<std::string, std::string>& raw);
 
-// Load /boot/config/shares/*.cfg into _shares. Tolerates hand-edited files
-// (spaces around `=`, optional quotes) via the generic parser.
+// Load /boot/config/shares/*.cfg into _shares
 static void load_share_settings() {
     _shares.clear();
     const std::string dir = "/boot/config/shares";
@@ -350,6 +383,7 @@ static void sig_handler(int sig) {
 // Config loader
 // ---------------------------------------------------------------------------
 
+// be graceful with hand edit files...
 static void parse_cfg_into(const std::string& path,
                             std::unordered_map<std::string, std::string>& raw) {
     std::ifstream f(path);
@@ -541,8 +575,7 @@ static bool transfers_running() {
 }
 
 // Cached transfers check - refreshes at most every MOVER_CACHE_SEC seconds.
-// Used as a fast gate to skip counting events while transfers are running.
-// Log on state transitions so it's visible when counting resumes/pauses.
+// Log when monitoring pauses/resumes
 static bool transfers_active() {
     auto now = time(nullptr);
     if (now - _transfers_checked < MOVER_CACHE_SEC) 
@@ -710,7 +743,7 @@ static PromoteDecision should_promote(const AccessRecord& rec, int64_t size) {
     }
     // so we're packing a big one or we fell through
 
-    // Rules 2 & 3 - sliding windows (also reached for small files via fallthrough)
+    // Rules 2 & 3 - sliding windows
     auto now          = time(nullptr);
     auto short_cutoff = now - (time_t)_cfg.large_short_window_mins * 60;
     auto long_cutoff  = now - (time_t)_cfg.large_long_window_hours * 3600;
@@ -768,7 +801,8 @@ static void handle_event(const std::string& path, EvType ev) {
         if (path.rfind(sp, 0) == 0) { in_scope = true; break; }
     if (!in_scope) return;
 
-    // Already on a known cache pool mount? (defensive - scan_paths should only be array disks)
+    // Already on a known cache pool mount? 
+    // TODO CHECK IF NEEDED: defensive - scan_paths should only be array disks
     if (path.rfind(MNT_PREFIX, 0) == 0) {
         auto end = path.find('/', MNT_PREFIX.size());
         if (end != std::string::npos) {
@@ -961,43 +995,7 @@ static void handle_event(const std::string& path, EvType ev) {
     }
 }
 
-static void trim_log() {
-    const auto& path = _cfg.log_file;
-
-    struct stat st;
-    if (stat(path.c_str(), &st) != 0) return;
-    const long max_bytes = _cfg.log_max_size_mb * 1024L * 1024L;
-    if ((long)st.st_size <= max_bytes) return;
-
-    std::vector<std::string> lines;
-    {
-        std::ifstream in(path);
-        if (!in.is_open()) return;
-        std::string line;
-        while (std::getline(in, line)) lines.push_back(std::move(line));
-    }
-
-    // Keep whole lines from the end, up to log_trim_size_mb.
-    const long trim_bytes = _cfg.log_trim_size_mb * 1024L * 1024L;
-    long kept_bytes = 0;
-    auto start = lines.size();
-    while (start > 0) {
-        long line_bytes = (long)lines[start - 1].size() + 1; // +1 for newline
-        if (kept_bytes + line_bytes > trim_bytes) break;
-        kept_bytes += line_bytes;
-        --start;
-    }
-
-    _log_stream.close();
-    {
-        std::ofstream out(path, std::ios::trunc);
-        for (auto i = start; i < lines.size(); ++i)
-            out << lines[i] << '\n';
-    }
-    _log_stream.open(path, std::ios::app);
-    log_info("Log trimmed to " + std::to_string(_cfg.log_trim_size_mb) + " MB.");
-}
-
+// Lazily clean up the access map from old entries
 static void maybe_cleanup() {
     auto now = time(nullptr);
     if (now - _last_cleanup < CLEANUP_INTERVAL_SEC) return;
@@ -1094,7 +1092,8 @@ static int init_fanotify() {
         return fd;
 
     // Slow boots (arrays/pools can take 20-30 min) mean a scan path may not be
-    // mounted yet. Wait for it rather than silently watching nothing.
+    // mounted yet. Wait for it rather than silently watching nothing...
+    // Whatcha doing? - Nothing... - You watching me? - I swear I dont...
     if (_cfg.mount_wait_timeout_mins > 0) {
         auto deadline = time(nullptr) + (time_t)_cfg.mount_wait_timeout_mins * 60;
         log_warn("Waiting for unmounted scan paths: " + join_csv(pending));

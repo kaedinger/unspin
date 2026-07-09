@@ -52,11 +52,10 @@ DRY_RUN="yes"
 LOG_LEVEL="info"
 
 # On debug logging, also log every skipped-share access (excluded/non-cached shares).
-# Off by default - a noisy excluded share (e.g. downloads) can otherwise flood the
-# log and crowd out useful history for other shares/disks.
+# Off by default to avoid log flooding
 LOG_EXCLUDED_SHARES="no"
 
-# Log file is trimmed once it exceeds this size, down to LOG_TRIM_SIZE_MB (whole lines kept).
+# Log file is trimmed once it exceeds LOG_MAX_SIZE_MB, down to LOG_TRIM_SIZE_MB.
 LOG_MAX_SIZE_MB="64"
 LOG_TRIM_SIZE_MB="5"
 

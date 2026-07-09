@@ -1,6 +1,6 @@
 ﻿<?php
 /* Unspin - Settings page for Unraid
- * Included by Unspin.page (GET only - rendering).
+ * Included by Unspin.page
  * All POST actions are handled by include/exec.php via jQuery $.post().
  */
 
@@ -279,7 +279,7 @@ dt.hf-share-name {
       <?= opt('no',  $c['LOG_EXCLUDED_SHARES'] ?? 'no', 'No') ?>
       <?= opt('yes', $c['LOG_EXCLUDED_SHARES'] ?? 'no', 'Yes') ?>
     </select>
-    <div class="hf-help">On Debug logging, also log every access to excluded/non-cached shares. A noisy excluded share (e.g. a download folder) can otherwise flood the log and crowd out the "Recently Accessed Files" history for other shares. Only enable this temporarily if you want to check whether an excluded share is actually hot enough to reconsider. <strong>Default: No.</strong></div>
+    <div class="hf-help">On Debug logging, also log every access to excluded/non-cached shares. A noisy excluded share (e.g. a download folder) can otherwise flood the log and crowd out the "Recently Accessed Files" history for other shares. Only enable this temporarily, for instance to reconsider an excluded share for tiering. <strong>Default: No.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Log Max Size</dt>
@@ -301,7 +301,7 @@ dt.hf-share-name {
       <span>MB</span>
       <span class="hf-reset" onclick="hfReset('LOG_TRIM_SIZE_MB')" title="Reset to default">&#x21ba;</span>
     </div>
-    <div class="hf-help">Once Log Max Size is exceeded, the log is trimmed down to this size (whole lines kept, oldest dropped first). <strong>Default: 5.</strong></div>
+    <div class="hf-help">Once Log Max Size is exceeded, the log is trimmed down to this size. <strong>Default: 5.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pause on rsync</dt>
@@ -310,7 +310,7 @@ dt.hf-share-name {
       <?= opt('yes', $c['PAUSE_ON_RSYNC'], 'Yes') ?>
       <?= opt('no',  $c['PAUSE_ON_RSYNC'], 'No') ?>
     </select>
-    <div class="hf-help">Pause event counting while any <code>rsync</code> process is running on the system. Unraid's Mover always pauses Unspin regardless of this setting. Tools like <em>Unbalanced</em> use rsync to move files between array disks - leaving this enabled prevents their activity from inflating access counters and triggering false promotions. <strong>Default: Yes.</strong></div>
+    <div class="hf-help">Pause monitoring while any <code>rsync</code> process is running on the system. Unraid's Mover always pauses Unspin regardless of this setting. Tools like <em>Unbalanced</em> and <em>Mover Tuning</em> use rsync to move files between array disks - leaving this enabled prevents their activity from inflating access counters and triggering false promotions. <strong>Default: Yes.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Mount Wait Timeout</dt>
@@ -321,7 +321,7 @@ dt.hf-share-name {
       <span>min</span>
       <span class="hf-reset" onclick="hfReset('MOUNT_WAIT_TIMEOUT_MINS')" title="Reset to default">&#x21ba;</span>
     </div>
-    <div class="hf-help">On a slow boot the array - especially ZFS pools - can take <strong>20-30 minutes</strong> to mount. Rather than start with nothing to watch, Unspin waits up to this many minutes for each scan path to mount, raising an Unraid notification while it waits and a failure notification if the path never appears. <code>0</code> disables waiting (skip missing mounts immediately). <strong>Default: 45.</strong></div>
+    <div class="hf-help">On a slow boot the array - especially ZFS pools - can take <strong>20-30 minutes</strong> to mount. Rather than start with nothing to watch, Unspin waits up to this many minutes for each scan path to mount, raising respective Unraid notifications. <code>0</code> disables waiting (skip missing mounts immediately). <strong>Default: 45.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Mount Retry Interval</dt>
@@ -405,7 +405,7 @@ dt.hf-share-name {
 
   <dt>&nbsp;</dt>
   <dd>
-    <div class="hf-help" id="hf-shares-help">Untick a share to prevent Unspin from promoting its files, even when <code>shareUseCache</code> is <code>yes</code> or <code>prefer</code>. Shares with <code>no</code> or <code>only</code> are always skipped and cannot be toggled. Click <strong>Apply</strong> below to save your changes.</div>
+    <div class="hf-help" id="hf-shares-help">Untick a share to prevent Unspin from promoting its files, even when <code>shareUseCache</code> is <code>yes</code> or <code>prefer</code>. Shares with <code>no</code> or <code>only</code> are always skipped and cannot be toggled. Don't forget to click <strong>Apply</strong> below!</div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Fill Limits</dt>

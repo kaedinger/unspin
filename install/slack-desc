@@ -10,8 +10,8 @@ Unspin: Unspin (Automatic hotfile tiering for Unraid)
 Unspin:
 Unspin: Watches file accesses in real time via fanotify and promotes hot
 Unspin: files to fast storage (cache or NVMe). Cold demotion is handled
-Unspin: by Unraid's built-in mover. Fully configurable via the Utilities
-Unspin: settings page.
+Unspin: by Unraid's built-in mover or CA's Mover Tuning plugin. 
+Unspin: Fully configurable via the Utilities settings page.
 Unspin:
 Unspin:
 Unspin:
