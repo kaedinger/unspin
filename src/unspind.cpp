@@ -226,8 +226,10 @@ static void init_nobody() {
     if (pw) {
         _nobody_uid = pw->pw_uid;
         _nobody_gid = pw->pw_gid;
+    } else {
+        log_err("getpwnam(\"nobody\") failed - falling back to defaults");
     }
-    log_info("nobody uid=" + std::to_string(_nobody_uid) + " gid=" + std::to_string(_nobody_gid));
+    log_info("using nobody uid=" + std::to_string(_nobody_uid) + " gid=" + std::to_string(_nobody_gid));
 }
 
 static void mkdir_p(const std::string& path) {
@@ -236,7 +238,8 @@ static void mkdir_p(const std::string& path) {
             auto sub = path.substr(0, i);
             if (sub.empty()) continue;
             if (mkdir(sub.c_str(), 0777) == 0) {
-                chown(sub.c_str(), _nobody_uid, _nobody_gid);
+                if (chown(sub.c_str(), _nobody_uid, _nobody_gid) != 0)
+                    log_err("chown(" + sub + "): " + strerror(errno));
             } else if (errno != EEXIST) {
                 log_err("mkdir(" + sub + "): " + strerror(errno));
             }
@@ -637,7 +640,8 @@ static bool copy_file(const std::string& src, const std::string& dst) {
 
     // Set Unraid-standard permissions and ownership
     chmod(dst.c_str(), dst_mode);
-    chown(dst.c_str(), _nobody_uid, _nobody_gid);
+    if (chown(dst.c_str(), _nobody_uid, _nobody_gid) != 0)
+        log_err("chown(" + dst + "): " + strerror(errno));
 
     // Preserve original atime and mtime
     struct timespec times[2] = { st.st_atim, st.st_mtim };
@@ -1207,6 +1211,7 @@ int main(int argc, char* argv[]) {
 
     log_info("=== unspind starting ===");
     log_config();
+    init_nobody();
 
     int fan_fd = init_fanotify();
     if (fan_fd < 0) {
