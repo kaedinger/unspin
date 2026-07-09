@@ -8,25 +8,7 @@ $cfg_file = "/boot/config/plugins/unspin/unspin.cfg";
 $log_file = "/var/log/unspin.log";
 $pid_file = "/var/run/unspind.pid";
 
-function load_cfg($path) {
-    $cfg = [];
-    if (!file_exists($path)) return $cfg;
-    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-        $line = trim($line);
-        if ($line === '' || $line[0] === '#') continue;
-        if (strpos($line, '=') !== false) {
-            [$k, $v] = explode('=', $line, 2);
-            $cfg[trim($k)] = trim($v, " \t\"'");
-        }
-    }
-    return $cfg;
-}
-
-function daemon_running($pid_file) {
-    if (!file_exists($pid_file)) return false;
-    $pid = (int)trim(file_get_contents($pid_file));
-    return $pid > 0 && file_exists("/proc/$pid");
-}
+require_once __DIR__ . '/include/cfg.php';
 
 // Insert a space between the numeric part and the unit (e.g. "500MB" → "500 MB")
 function fmt_size($v) {
@@ -52,29 +34,6 @@ function strip_disk_prefix($path, $disk) {
     return substr($path, strlen($disk));
 }
 
-
-// Parse /boot/config/shares/*.cfg -> ['share' => ['use_cache'=>..,'cache_pool'=>..]].
-// Mirrors load_shares() in exec.php; duplicated to keep the page render self-contained.
-function unspin_load_shares() {
-    $out = [];
-    $dir = '/boot/config/shares';
-    if (!is_dir($dir)) return $out;
-    foreach (glob("$dir/*.cfg") as $path) {
-        $share = basename($path, '.cfg');
-        $info  = ['use_cache' => '', 'cache_pool' => ''];
-        foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-            $line = trim($line);
-            if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) continue;
-            [$k, $v] = explode('=', $line, 2);
-            $k = trim($k); $v = trim($v, " \t\"'");
-            if      ($k === 'shareUseCache')  $info['use_cache']  = $v;
-            else if ($k === 'shareCachePool') $info['cache_pool'] = $v;
-        }
-        $out[$share] = $info;
-    }
-    ksort($out);
-    return $out;
-}
 
 $defaults_file = "/usr/local/emhttp/plugins/unspin/unspin.cfg.default";
 $defaults = load_cfg($defaults_file);
@@ -112,20 +71,12 @@ if (($c['LOG_LEVEL'] ?? '') === 'debug') {
 }
 
 // Detected shares + excluded set for the Detected Shares table.
-$shares         = unspin_load_shares();
+$shares         = load_unraid_shares();
 $excluded_csv   = $c['EXCLUDED_SHARES'] ?? '';
 $excluded_set   = array_flip(array_filter(array_map('trim', explode(',', $excluded_csv))));
 
 // Pools currently referenced by promotable (yes/prefer, not excluded) shares.
-$detected_pools = [];
-foreach ($shares as $sname => $info) {
-    if (isset($excluded_set[$sname])) continue;
-    if ($info['use_cache'] !== 'yes' && $info['use_cache'] !== 'prefer') continue;
-    if ($info['cache_pool'] === '') continue;
-    $detected_pools[$info['cache_pool']] = true;
-}
-ksort($detected_pools);
-$detected_pools = array_keys($detected_pools);
+$detected_pools = detect_promotable_pools($shares, $excluded_set);
 
 // Legacy migration seed for fill % inputs.
 $legacy_fill = $c['MAX_HOT_FILL_PERCENT'] ?? '';

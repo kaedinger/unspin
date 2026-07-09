@@ -29,6 +29,7 @@
 - feat: new "Include excluded shares in Debug log" setting (default No) - a noisy excluded share (e.g. a download folder) was flooding the log and pushing other shares/disks out of the log's retention window before their activity could be seen; skip-share debug logging is now off by default and only opt-in
 - cosmetics: Recently Accessed Files panel shows two disks per row, bordered to match the Activity Log box, alternating row shading, long filenames truncated in the middle (fitted to the actual available width) rather than at the end, and the redundant /mnt/diskN prefix dropped from each row (still shown on hover)
 - fix: the daemon now actually looks up the nobody user's uid/gid at startup instead of always using the hardcoded fallback values, and logs an error if that lookup fails or if a chown on a created directory or promoted file fails
+- refactor: config/share-parsing helpers (load_cfg, daemon_running, share detection) that were copy-pasted independently in the settings page and the POST handler are now shared from one include, same pattern as the log-scanning code
 
 ### 2026.04.29.43847
 - docs: fix plugin title rendering in README (broken bold markdown)

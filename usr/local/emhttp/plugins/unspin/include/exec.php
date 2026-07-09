@@ -11,19 +11,7 @@ $rc_script = "/etc/rc.d/rc.unspin";
 
 header('Content-Type: application/json');
 
-function load_cfg($path) {
-    $cfg = [];
-    if (!file_exists($path)) return $cfg;
-    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-        $line = trim($line);
-        if ($line === '' || $line[0] === '#') continue;
-        if (strpos($line, '=') !== false) {
-            [$k, $v] = explode('=', $line, 2);
-            $cfg[trim($k)] = trim($v, " \t\"'");
-        }
-    }
-    return $cfg;
-}
+require_once __DIR__ . '/cfg.php';
 
 function save_cfg($path, $cfg) {
     $header = "# Unspin Configuration - managed by UI\n# " . date('Y-m-d H:i:s') . "\n\n";
@@ -32,43 +20,6 @@ function save_cfg($path, $cfg) {
         $body .= "$k=\"$v\"\n";
     }
     file_put_contents($path, "{$header}{$body}");
-}
-
-// Parse /boot/config/shares/*.cfg into ['share' => ['use_cache'=>..,'cache_pool'=>..]].
-function load_shares() {
-    $out = [];
-    $dir = '/boot/config/shares';
-    if (!is_dir($dir)) return $out;
-    foreach (glob("$dir/*.cfg") as $path) {
-        $share = basename($path, '.cfg');
-        $info  = ['use_cache' => '', 'cache_pool' => ''];
-        foreach (load_cfg($path) as $k => $v) {
-            if      ($k === 'shareUseCache')  $info['use_cache']  = $v;
-            else if ($k === 'shareCachePool') $info['cache_pool'] = $v;
-        }
-        $out[$share] = $info;
-    }
-    ksort($out);
-    return $out;
-}
-
-// Which pools are referenced by yes/prefer shares that aren't excluded by the user.
-function detect_promotable_pools($shares, $excluded_set) {
-    $pools = [];
-    foreach ($shares as $name => $info) {
-        if (isset($excluded_set[$name])) continue;
-        if ($info['use_cache'] !== 'yes' && $info['use_cache'] !== 'prefer') continue;
-        if ($info['cache_pool'] === '') continue;
-        $pools[$info['cache_pool']] = true;
-    }
-    ksort($pools);
-    return array_keys($pools);
-}
-
-function daemon_running($pid_file) {
-    if (!file_exists($pid_file)) return false;
-    $pid = (int)trim(file_get_contents($pid_file));
-    return $pid > 0 && file_exists("/proc/$pid");
 }
 
 $action    = $_POST['action'] ?? '';
@@ -101,7 +52,7 @@ if ($action === 'save') {
     }
 
     // Excluded shares: posted as SHARE_EXCLUDE_<name>=1|0 checkboxes.
-    $shares      = load_shares();
+    $shares      = load_unraid_shares();
     $excluded    = [];
     foreach ($shares as $sname => $info) {
         if ($info['use_cache'] !== 'yes' && $info['use_cache'] !== 'prefer') continue;
