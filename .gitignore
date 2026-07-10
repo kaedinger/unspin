@@ -19,3 +19,6 @@ usr/local/sbin/unspind
 
 # Local dev helpers (not distributed)
 scripts/
+
+# Personal Claude Code settings
+.claude/settings.local.json
