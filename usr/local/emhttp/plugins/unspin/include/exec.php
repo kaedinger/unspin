@@ -42,14 +42,6 @@ if ($action === 'save') {
     $cfg = [];
     $k = 'SERVICE';                  $cfg[$k] = $enum($k, ['enabled','disabled']);
     $k = 'SCAN_PATHS';               $cfg[$k] = $str($k);
-    foreach (array_map('trim', explode(',', $cfg['SCAN_PATHS'])) as $sp) {
-        if ($sp !== '' && strncmp($sp, '/mnt/user', 9) === 0) {
-            echo json_encode(['ok' => false,
-                'message' => "Scan Paths must be array disk mount points (e.g. /mnt/disk1), not share paths ($sp). Use \"Detect Array Disks\" to auto-populate.",
-                'running' => daemon_running($pid_file)]);
-            exit;
-        }
-    }
 
     // Excluded shares: posted as SHARE_EXCLUDE_<name>=1|0 checkboxes.
     $shares      = load_unraid_shares();
@@ -64,13 +56,35 @@ if ($action === 'save') {
     sort($excluded);
     $cfg['EXCLUDED_SHARES'] = implode(',', $excluded);
     $excluded_set = array_flip($excluded);
+    $detected_pools = detect_promotable_pools($shares, $excluded_set);
+
+    // Scan Paths must be array disk mount points - reject the share mount and any
+    // path sitting on a detected cache pool (checked here, not earlier, since it
+    // needs $detected_pools).
+    foreach (array_map('trim', explode(',', $cfg['SCAN_PATHS'])) as $sp) {
+        if ($sp === '') continue;
+        if (strncmp($sp, '/mnt/user', 9) === 0) {
+            echo json_encode(['ok' => false,
+                'message' => "Scan Paths must be array disk mount points (e.g. /mnt/disk1), not share paths ($sp). Use \"Detect Array Disks\" to auto-populate.",
+                'running' => daemon_running($pid_file)]);
+            exit;
+        }
+        foreach ($detected_pools as $pool) {
+            if ($sp === "/mnt/$pool" || strncmp($sp, "/mnt/$pool/", strlen("/mnt/$pool/")) === 0) {
+                echo json_encode(['ok' => false,
+                    'message' => "Scan Paths must be array disk mount points (e.g. /mnt/disk1), not the cache pool \"$pool\" ($sp).",
+                    'running' => daemon_running($pid_file)]);
+                exit;
+            }
+        }
+    }
 
     // Per-pool fill thresholds. Only write entries for currently-detected promotable pools.
     // Migration: if the old config had MAX_HOT_FILL_PERCENT, seed any pool input that
     // wasn't posted with that value; otherwise fall back to 80.
     $legacy = $prev['MAX_HOT_FILL_PERCENT'] ?? '';
     $legacy = ($legacy !== '' && is_numeric($legacy)) ? intval($legacy) : 80;
-    foreach (detect_promotable_pools($shares, $excluded_set) as $pool) {
+    foreach ($detected_pools as $pool) {
         $pk  = 'MAX_FILL_PERCENT_' . $pool;
         $raw = $_POST[$pk] ?? '';
         $val = is_numeric($raw) ? intval($raw) : $legacy;

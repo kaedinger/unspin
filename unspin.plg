@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- fix: Scan Paths now rejects cache pool mounts, not just the share mount, both in the settings page and the daemon's own config validation
+
 ### 2026.07.10.38411
 - fix: on slow boots (arrays/ZFS pools can take 20-30 min to mount) the daemon can now wait for each scan path to actually mount before adding the fanotify watch (GH #3)
 - feat: configurable mount wait - MOUNT_WAIT_TIMEOUT_MINS (default 45, 0 disables) and MOUNT_RETRY_INTERVAL_SECS (default 30), also available on the settings page

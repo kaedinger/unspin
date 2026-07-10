@@ -456,18 +456,7 @@ static void load_config() {
         return (it != raw.end()) ? it->second : empty;
     };
 
-    {
-        auto raw_scans = split_csv(get("SCAN_PATHS"));
-        _cfg.scan_paths.clear();
-        for (const auto& sp : raw_scans) {
-            if (sp.rfind(SHARE_MNT, 0) == 0) {
-                log_warn("Ignoring scan path '" + sp + "': " + SHARE_MNT + " is the share mount - "
-                         "use array disk mount points (e.g. " + MNT_PREFIX + "disk1) instead");
-            } else {
-                _cfg.scan_paths.push_back(sp);
-            }
-        }
-    }
+    auto raw_scans = split_csv(get("SCAN_PATHS"));
 
     // Default fill % for pools without a per-pool override.
     // Legacy MAX_HOT_FILL_PERCENT, if present, provides the default (migration).
@@ -515,6 +504,28 @@ static void load_config() {
         info.excluded = exset.count(sname) > 0;
 
     rebuild_pools(per_pool_limits);
+
+    // Filtered here (not earlier) because it needs _pools, which rebuild_pools()
+    // just populated - reject the share mount and any known cache pool, both of
+    // which fanotify/promotion logic assume scan_paths never contains.
+    _cfg.scan_paths.clear();
+    for (const auto& sp : raw_scans) {
+        if (sp.rfind(SHARE_MNT, 0) == 0) {
+            log_warn("Ignoring scan path '" + sp + "': " + SHARE_MNT + " is the share mount - "
+                     "use array disk mount points (e.g. " + MNT_PREFIX + "disk1) instead");
+            continue;
+        }
+        if (sp.rfind(MNT_PREFIX, 0) == 0) {
+            auto end = sp.find('/', MNT_PREFIX.size());
+            auto top = sp.substr(MNT_PREFIX.size(), end == std::string::npos ? std::string::npos : end - MNT_PREFIX.size());
+            if (_pools.count(top)) {
+                log_warn("Ignoring scan path '" + sp + "': " + MNT_PREFIX + top + " is a cache pool, not an array disk - "
+                         "use array disk mount points (e.g. " + MNT_PREFIX + "disk1) instead");
+                continue;
+            }
+        }
+        _cfg.scan_paths.push_back(sp);
+    }
 }
 
 static void log_config() {
@@ -813,8 +824,11 @@ static void handle_event(const std::string& path, EvType ev) {
         if (path.rfind(sp, 0) == 0) { in_scope = true; break; }
     if (!in_scope) return;
 
-    // Already on a known cache pool mount? 
-    // TODO CHECK IF NEEDED: defensive - scan_paths should only be array disks
+    // Already on a known cache pool mount? Config validation rejects cache-pool
+    // paths in SCAN_PATHS (see load_config()), but that only catches pools known
+    // at config-load time; a pool added/renamed later, or a config file edited
+    // while the daemon isn't running, can still slip a pool path through. Without
+    // this guard, files already on cache would flow into the promotion logic below.
     if (path.rfind(MNT_PREFIX, 0) == 0) {
         auto end = path.find('/', MNT_PREFIX.size());
         if (end != std::string::npos) {
