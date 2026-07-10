@@ -21,6 +21,7 @@
 <CHANGES>
 ### next
 - fix: Scan Paths now rejects cache pool mounts, not just the share mount, both in the settings page and the daemon's own config validation
+- install: drop one-time `removepkg Unspin` migration line (legacy capital-U package name cleanup, no longer needed)
 
 ### 2026.07.10.38411
 - fix: on slow boots (arrays/ZFS pools can take 20-30 min to mount) the daemon can now wait for each scan path to actually mount before adding the fanotify watch (GH #3)
@@ -138,9 +139,6 @@ echo ""
 
 # Stop daemon before replacing files
 /etc/rc.d/rc.unspin stop 2>/dev/null
-
-# Migrate from legacy capital-U package name (TODO drop after a few releases - see CHANGES)
-removepkg Unspin 2>/dev/null
 
 # Remove old version if present
 removepkg &name; 2>/dev/null
