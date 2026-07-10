@@ -48,6 +48,7 @@ static constexpr int64_t    GB                   = 1024 * MB;
 static constexpr int64_t    TB                   = 1024 * GB;
 static constexpr int64_t    SMALL_F_THRESHOLD    = 10 * MB;
 static constexpr double     DEFAULT_MAX_FILL_PERCENT = 80.0;
+static constexpr double     LOG_LOCATION_FULL_PERCENT = 95.0;          // trim log immediately if its filesystem is this full
 static constexpr const char RULE1[]              = "rule 1 - small";
 static constexpr const char RULE2[]              = "rule 2 - big, reads";
 static constexpr const char RULE3[]              = "rule 3 - big, opens";
@@ -145,6 +146,17 @@ static std::ofstream _log_stream;
 static constexpr int LOG_SIZE_CHECK_INTERVAL_SEC = 60;
 
 static void trim_log(); // defined below; checks/trims the log by size
+static double disk_fill_percent(const std::string& path); // defined below in Disk utilities
+
+// Runs at most once per LOG_SIZE_CHECK_INTERVAL_SEC. Called both from vlog()
+// (so normal logging keeps the log trimmed) and from the main loop (so it
+// still runs on schedule while paused, when little or nothing gets logged).
+static void check_log_size() {
+    auto now = time(nullptr);
+    if (now - _last_log_size_check < LOG_SIZE_CHECK_INTERVAL_SEC) return;
+    _last_log_size_check = now;
+    trim_log();
+}
 
 static void vlog(const char* level, const std::string& msg) {
     auto now = time(nullptr);
@@ -156,10 +168,7 @@ static void vlog(const char* level, const std::string& msg) {
     out << ts << " [" << level << "] " << msg << "\n";
     out.flush();
 
-    if (now - _last_log_size_check >= LOG_SIZE_CHECK_INTERVAL_SEC) {
-        _last_log_size_check = now;
-        trim_log();
-    }
+    check_log_size();
 }
 
 static void log_info (const std::string& m) { vlog("INFO ", m); }
@@ -189,7 +198,9 @@ static void trim_log() {
     struct stat st;
     if (stat(path.c_str(), &st) != 0) return;
     const long max_bytes = _cfg.log_max_size_mb * 1024L * 1024L;
-    if ((long)st.st_size <= max_bytes) return;
+    const bool over_size  = (long)st.st_size > max_bytes;
+    const bool location_full = disk_fill_percent(path) >= LOG_LOCATION_FULL_PERCENT;
+    if (!over_size && !location_full) return;
 
     std::vector<std::string> lines;
     {
@@ -217,7 +228,8 @@ static void trim_log() {
             out << lines[i] << '\n';
     }
     _log_stream.open(path, std::ios::app);
-    log_info("Log trimmed to " + std::to_string(_cfg.log_trim_size_mb) + " MB.");
+    log_info("Log trimmed to " + std::to_string(_cfg.log_trim_size_mb) + " MB" +
+              (location_full ? " (log location was nearly full)" : "") + ".");
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,6 +1241,10 @@ int main(int argc, char* argv[]) {
             was_paused = _paused;
             log_info(_paused ? "--- Paused ---" : "--- Resumed ---");
         }
+
+        // Runs on its own schedule (not just when something gets logged), so
+        // the log still gets trimmed while paused and otherwise quiet.
+        check_log_size();
 
         if (_reload) {
             _reload = 0;
