@@ -26,6 +26,7 @@
 - fix: a scan path is now considered ready only when it is a genuine mount point, avoiding accidentally watching the root filesystem
 - fix: log trimming is size-based, checked continuously; prevent out of memory errors
 - fix: log also trims when its disk is nearly full, and keeps checking on schedule while paused
+- fix: switching Log Level to Debug and hitting Apply could crash the settings page with an out-of-memory error on a large log; recent-files panel also now shows/hides immediately without a reload
 - feat: on debug logging, the settings page now shows condensed "5 Recently Accessed Files" panels per watched disk (GH #4)
 - feat: new checkbox to exclude skipped shares from both these panels and the log view (GH #4)
 - feat: new "Include excluded shares in Debug log" setting (default No) is used to prevent noisy skipped shares pushing Recent Files out of the log's retention window

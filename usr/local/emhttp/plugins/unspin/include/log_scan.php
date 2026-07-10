@@ -172,7 +172,10 @@ function log_scan_full($log_file, $scan_paths) {
 function log_scan_incremental($log_file, $from_offset, $scan_paths, $current_lists) {
     if (!file_exists($log_file)) return [log_scan_apply_caps($current_lists), 0];
     $filesize = filesize($log_file);
-    if ($filesize < $from_offset) return log_scan_full($log_file, $scan_paths);
+    // offset 0 means no real checkpoint yet (e.g. first poll after switching Log
+    // Level to Debug) - reading forward from byte 0 would fread() the whole file
+    // into memory at once. Use the chunked backward scan instead.
+    if ($from_offset <= 0 || $filesize < $from_offset) return log_scan_full($log_file, $scan_paths);
     if ($filesize === $from_offset) return [$current_lists, $filesize];
 
     $fh = fopen($log_file, 'rb');

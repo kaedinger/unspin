@@ -259,18 +259,19 @@ dt.hf-share-name {
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Dry Run Mode</dt>
   <dd>
     <select name="DRY_RUN" id="hf_DRY_RUN">
-      <?= opt('yes', $c['DRY_RUN'], 'Yes - log decisions only, no moves') ?>
-      <?= opt('no',  $c['DRY_RUN'], 'No - move files') ?>
+      <?= opt('yes', $c['DRY_RUN'], 'Yes - log decisions only, no promotions') ?>
+      <?= opt('no',  $c['DRY_RUN'], 'No - promote files') ?>
     </select>
     <div class="hf-help">Leave enabled until you are satisfied with the promotion decisions in the log. <strong>Default: Yes.</strong></div>
   </dd>
 
-  <dt>Log Level</dt>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Log Level</dt>
   <dd>
     <select name="LOG_LEVEL" id="hf_LOG_LEVEL">
       <?= opt('info',  $c['LOG_LEVEL'], 'Info') ?>
       <?= opt('debug', $c['LOG_LEVEL'], 'Debug (verbose - logs every access with counts)') ?>
     </select>
+    <div class="hf-help">Debug also enables the "5 Recently Accessed Files" panels above the Activity Log, showing per-disk read counts and promotion status. <strong>Default: Info.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Include excluded shares in Debug log</dt>
@@ -563,8 +564,7 @@ dt.hf-share-name {
 
 <br>
 
-<?php if (($c['LOG_LEVEL'] ?? '') === 'debug'): ?>
-<div id="recent-panel" style="margin-bottom:12px;">
+<div id="recent-panel" style="margin-bottom:12px;<?= ($c['LOG_LEVEL'] ?? '') === 'debug' ? '' : 'display:none;' ?>">
   <strong style="display:block;margin-bottom:10px;">5 Recently Accessed Files</strong>
   <div id="recent-disks" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
 <?php foreach ($recent_lists as $disk => $entries): ?>
@@ -591,11 +591,11 @@ dt.hf-share-name {
     </div>
 <?php endforeach; ?>
   </div>
-  <label style="display:block;margin-top:8px;">
-    <input type="checkbox" id="hf-exclude-skipped"> Exclude skipped shares
-  </label>
 </div>
-<?php endif; ?>
+
+<label style="display:block;margin-bottom:8px;">
+  <input type="checkbox" id="hf-exclude-skipped"> Exclude skipped shares
+</label>
 
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
   <strong style="margin-bottom: -26px;">Activity Log</strong>
@@ -839,6 +839,8 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
         document.querySelectorAll('input[data-hf-pool="1"]').forEach(function (el) {
           if (r.cfg[el.name] !== undefined) el.value = r.cfg[el.name];
         });
+        var panel = document.getElementById('recent-panel');
+        if (panel) panel.style.display = r.cfg.LOG_LEVEL === 'debug' ? '' : 'none';
       }
       applyBtn.disabled  = true;
       applyBtn.innerHTML = 'Apply';
