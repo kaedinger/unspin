@@ -40,6 +40,7 @@ static constexpr int        CLEANUP_INTERVAL_SEC = 3600;               // 1 h be
 static constexpr int        POLL_TIMEOUT_MS      = 5000;               // fanotify poll wait
 static constexpr size_t     FAN_BUF_BYTES        = 65536;              // fanotify read buffer
 static constexpr int        MOVER_CACHE_SEC      = 5;                  // how long to cache mover-active result
+static constexpr int        PAUSE_DIR_CACHE_SEC  = 2;                  // how long to cache the pause-lock-directory scan
 static constexpr uint64_t   FAN_WATCH_MASK       = FAN_ACCESS | FAN_OPEN | FAN_CLOSE_NOWRITE
                                                  | FAN_CLOSE_WRITE | FAN_MODIFY;
 static constexpr int64_t    KB                   = 1024;
@@ -58,6 +59,11 @@ static constexpr const char TRIM_CHARS[]         = " \t\r\n";
 static const     std::string MNT_PREFIX          = "/mnt/";
 // Share mount point - fanotify is ambiguous/unreliable here, so rejected in SCAN_PATHS validation.
 static const     std::string SHARE_MNT           = "/mnt/user";
+// Directory of named pause locks - rc.unspin pause/unpause just touch/rm a file here.
+// The daemon polls this directory itself (see pause_dir_active()) rather than trusting
+// rc.unspin to signal the exact 0->1 / 1->0 transition, which isn't atomic across
+// concurrent rc.unspin invocations (e.g. two cron'd backup scripts pausing back to back).
+static const     std::string PAUSE_DIR           = "/var/run/unspind.pause.d";
 
 // ---------------------------------------------------------------------------
 // Config & globals
@@ -135,6 +141,8 @@ static time_t      _last_log_size_check = 0;
 static std::unordered_map<std::string, std::string> _last_pool_full_msg; // per-pool suppression
 static bool        _transfers_cached  = false;
 static time_t      _transfers_checked = 0;
+static bool        _pause_dir_cached  = false;
+static time_t      _pause_dir_checked = 0;
 static uid_t       _nobody_uid       = 99;   // Unraid defaults; updated by init_nobody()
 static gid_t       _nobody_gid       = 100;
 
@@ -601,7 +609,7 @@ static bool transfers_running() {
 // Log when monitoring pauses/resumes
 static bool transfers_active() {
     auto now = time(nullptr);
-    if (now - _transfers_checked < MOVER_CACHE_SEC) 
+    if (now - _transfers_checked < MOVER_CACHE_SEC)
         return _transfers_cached;
     _transfers_checked = now;
 
@@ -612,6 +620,41 @@ static bool transfers_active() {
     else if (!_transfers_cached && prev)
         log_info("Mover or rsync finished - resuming monitoring");
     return _transfers_cached;
+}
+
+// True if any named pause lock exists in PAUSE_DIR. rc.unspin pause/unpause just
+// touch/rm a file here; the daemon decides its own paused state by looking at the
+// directory itself instead of trusting a signal from rc.unspin, since detecting the
+// exact 0->1 / 1->0 transition from a separate process is inherently racy when two
+// pause/unpause calls land close together (see PAUSE_DIR comment above).
+static bool pause_locks_present() {
+    DIR* d = opendir(PAUSE_DIR.c_str());
+    if (!d) return false;  // directory doesn't exist yet = no locks held
+    auto found = false;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != nullptr) {
+        if (std::strcmp(ent->d_name, ".") == 0 || std::strcmp(ent->d_name, "..") == 0) continue;
+        found = true;
+        break;
+    }
+    closedir(d);
+    return found;
+}
+
+// Cached pause-dir check - refreshes at most every PAUSE_DIR_CACHE_SEC seconds.
+static bool pause_dir_active() {
+    auto now = time(nullptr);
+    if (now - _pause_dir_checked < PAUSE_DIR_CACHE_SEC)
+        return _pause_dir_cached;
+    _pause_dir_checked = now;
+    _pause_dir_cached = pause_locks_present();
+    return _pause_dir_cached;
+}
+
+// Combined pause state: a direct SIGUSR1/SIGUSR2/SIGRTMIN signal (manual, documented
+// on the CLI banner) OR at least one named lock in PAUSE_DIR (rc.unspin pause/unpause).
+static bool is_paused() {
+    return _paused || pause_dir_active();
 }
 
 // ---------------------------------------------------------------------------
@@ -848,7 +891,7 @@ static void handle_event(const std::string& path, EvType ev) {
         return;
     }
 
-    auto skip_counting = _paused || transfers_active();
+    auto skip_counting = is_paused() || transfers_active();
 
     struct stat st;
     if (lstat(path.c_str(), &st) != 0) {
@@ -1251,9 +1294,10 @@ int main(int argc, char* argv[]) {
     log_info("Monitoring for file accesses...");
 
     while (!_quit) {
-        if (_paused != was_paused) {
-            was_paused = _paused;
-            log_info(_paused ? "--- Paused ---" : "--- Resumed ---");
+        auto paused_now = is_paused();
+        if (paused_now != was_paused) {
+            was_paused = paused_now;
+            log_info(paused_now ? "--- Paused ---" : "--- Resumed ---");
         }
 
         // Runs on its own schedule (not just when something gets logged), so
