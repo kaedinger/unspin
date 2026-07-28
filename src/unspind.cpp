@@ -41,6 +41,7 @@ static constexpr int        POLL_TIMEOUT_MS      = 5000;               // fanoti
 static constexpr size_t     FAN_BUF_BYTES        = 65536;              // fanotify read buffer
 static constexpr int        MOVER_CACHE_SEC      = 5;                  // how long to cache mover-active result
 static constexpr int        PAUSE_DIR_CACHE_SEC  = 2;                  // how long to cache the pause-lock-directory scan
+static constexpr int        PENDING_PROMOTE_STALE_SEC = 30 * 60;       // force a stuck deferred promotion through after this long with zero events
 static constexpr uint64_t   FAN_WATCH_MASK       = FAN_ACCESS | FAN_OPEN | FAN_CLOSE_NOWRITE
                                                  | FAN_CLOSE_WRITE | FAN_MODIFY;
 static constexpr int64_t    KB                   = 1024;
@@ -854,6 +855,36 @@ static PromoteDecision should_promote(const AccessRecord& rec, int64_t size) {
     return d;
 }
 
+// Attempt an immediate promotion (transfer / fill checks included). Shared by
+// handle_event() (right after a rule fires) and maybe_cleanup() (recovering a
+// promotion that's been stuck pending on a file whose open_count never made
+// it back to zero - see PENDING_PROMOTE_STALE_SEC).
+static void try_promote(const std::string& path, int64_t size, const std::string& sname,
+                         AccessRecord& rec, const PromoteDecision& dec) {
+    if (rec.promoted) return;
+    if (transfers_running()) {
+        log_info("[" + dec.rule + "] Mover or rsync active, deferring: " + path);
+        return;
+    }
+
+    const auto& pool_name = _shares.at(sname).cache_pool;
+    auto pit = _pools.find(pool_name);
+    auto limit = (pit != _pools.end()) ? pit->second.max_fill_percent
+                                       : _cfg.default_max_fill_percent;
+    auto pool_path = MNT_PREFIX + pool_name;
+    auto fill = disk_fill_percent(pool_path);
+    if (fill >= limit) {
+        auto msg = "[" + dec.rule + "] Pool " + pool_path + " " +
+                   std::to_string((int)fill) + "% full, skipping: " + path;
+        auto& last = _last_pool_full_msg[pool_path];
+        if (msg != last) { log_info(msg); last = msg; }
+        else             { log_debug(msg); }
+        return;
+    }
+    if (promote_file(path, size, dec, rec.total_reads))
+        rec.promoted = true;
+}
+
 // ---------------------------------------------------------------------------
 // Access event handler
 // ---------------------------------------------------------------------------
@@ -936,32 +967,6 @@ static void handle_event(const std::string& path, EvType ev) {
     auto now = time(nullptr);
     rec.last_event = now;
 
-    // Attempt an immediate promotion (transfer / fill checks included).
-    auto do_promote = [&](const PromoteDecision& dec) {
-        if (rec.promoted) return;
-        if (transfers_running()) {
-            log_info("[" + dec.rule + "] Mover or rsync active, deferring: " + path);
-            return;
-        }
-
-        const auto& pool_name = _shares.at(sname).cache_pool;
-        auto pit = _pools.find(pool_name);
-        auto limit = (pit != _pools.end()) ? pit->second.max_fill_percent
-                                           : _cfg.default_max_fill_percent;
-        auto pool_path = MNT_PREFIX + pool_name;
-        auto fill = disk_fill_percent(pool_path);
-        if (fill >= limit) {
-            auto msg = "[" + dec.rule + "] Pool " + pool_path + " " +
-                       std::to_string((int)fill) + "% full, skipping: " + path;
-            auto& last = _last_pool_full_msg[pool_path];
-            if (msg != last) { log_info(msg); last = msg; }
-            else             { log_debug(msg); }
-            return;
-        }
-        if (promote_file(path, size, dec, rec.total_reads))
-            rec.promoted = true;
-    };
-
     // Prune old timestamps, evaluate rules, then either promote or defer until file is closed.
     auto evaluate = [&]() {
         auto prune = now - (time_t)_cfg.large_long_window_hours * 3600;
@@ -985,7 +990,7 @@ static void handle_event(const std::string& path, EvType ev) {
                           path + " (" + human_size(size) + ") - " + dec.reason);
             return;
         }
-        do_promote(dec);
+        try_promote(path, size, sname, rec, dec);
     };
 
     if (ev == EvType::Read) {
@@ -1055,7 +1060,7 @@ static void handle_event(const std::string& path, EvType ev) {
             if (!rec.promoted && rec.pending_promote && rec.open_count == 0) {
                 PromoteDecision dec = rec.pending_dec;
                 rec.pending_promote = false;
-                do_promote(dec);
+                try_promote(path, size, sname, rec, dec);
             }
         } else {
             // CloseWrite: file was modified - only update open tracking, no promotion.
@@ -1072,13 +1077,41 @@ static void maybe_cleanup() {
 
     auto cutoff = now - (time_t)_cfg.large_long_window_hours * 3600;
     auto before = _access_map.size();
+    auto paused = is_paused();
 
     for (auto it = _access_map.begin(); it != _access_map.end(); ) {
         // Remove promoted entries and entries that haven't been accessed within the window
-        if (it->second.promoted || it->second.last_event < cutoff)
+        if (it->second.promoted || it->second.last_event < cutoff) {
             it = _access_map.erase(it);
-        else
-            ++it;
+            continue;
+        }
+
+        // A deferred promotion can get stuck forever if open_count drifts out of
+        // sync with reality - e.g. fanotify pairing more Opens than Closes for the
+        // same path (seen with repeated Explorer icon-extraction opens over SMB),
+        // so open_count never returns to 0 and the close-triggered promotion never
+        // runs. If the path has gone completely quiet for a while, nothing is
+        // realistically still reading it, so push the promotion through anyway
+        // instead of waiting forever.
+        auto& rec = it->second;
+        if (!paused && rec.pending_promote && now - rec.last_event >= PENDING_PROMOTE_STALE_SEC) {
+            struct stat st;
+            auto sname = path_share_name(it->first);
+            if (lstat(it->first.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+                !sname.empty() && share_promotable(sname)) {
+                PromoteDecision dec = rec.pending_dec;
+                rec.pending_promote = false;
+                log_info("[" + dec.rule + "] Stale pending promotion (" +
+                         std::to_string(PENDING_PROMOTE_STALE_SEC / 60) +
+                         " min quiet, open_count=" + std::to_string(rec.open_count) +
+                         "), promoting anyway: " + it->first);
+                try_promote(it->first, (int64_t)st.st_size, sname, rec, dec);
+            } else {
+                rec.pending_promote = false; // gone, no longer a regular file, or no longer promotable
+            }
+        }
+
+        ++it;
     }
 
     log_info("Access map cleanup: " + std::to_string(before) + " -> " +

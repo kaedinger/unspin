@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- fix: a promotion could get stuck forever if a file's open/close counts drifted out of sync (e.g. repeated Explorer opens over SMB); now promotes anyway after 30 min of inactivity
+
 ### 2026.07.28.37749
 - fix: Scan Paths now rejects cache pool mounts, not just the share mount, both in the settings page and the daemon's own config validation
 - install: drop one-time `removepkg Unspin` migration line (legacy capital-U package name cleanup, no longer needed)
