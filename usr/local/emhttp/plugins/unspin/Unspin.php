@@ -60,7 +60,8 @@ $is_paused = count($pause_locks) > 0;
 $pause_label = $is_paused ? ' (Paused: ' . htmlspecialchars(implode(', ', $pause_locks)) . ')' : '';
 
 require_once __DIR__ . '/include/log_scan.php';
-$log_lines_raw = log_tail_lines($log_file, 200);
+$log_tail_n    = (($c['LOG_LEVEL'] ?? '') === 'debug') ? 1000 : 200;
+$log_lines_raw = log_tail_lines($log_file, $log_tail_n);
 $log_lines     = htmlspecialchars($log_lines_raw);
 
 $recent_offset = 0;
@@ -645,13 +646,6 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
 
   if (lb) lb.scrollTop = lb.scrollHeight;
 
-  function filteredLog() {
-    if (!skipCb || !skipCb.checked) return rawLog;
-    return rawLog.split('\n').filter(function (l) {
-      return l.indexOf('[skip share]') === -1;
-    }).join('\n');
-  }
-
   // Hidden element used purely to measure text width in the exact font the
   // path cells use, so truncation matches the actual available space instead
   // of guessing a fixed character count.
@@ -725,9 +719,15 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   }
 
   function applySkipFilter() {
-    updateLog(filteredLog());
     document.querySelectorAll('.recent-table tr[data-type="skip"]').forEach(function (tr) {
       tr.style.display = (skipCb && skipCb.checked) ? 'none' : '';
+    });
+    // The log line quota is now filled server-side (see log_tail_lines()), so
+    // toggling the filter needs a fresh fetch, not just a re-render of what's
+    // already on screen - otherwise a flooded tail can leave nothing to show.
+    hfPost(pollData(), function (r) {
+      updateStatus(r.running, r.paused, r.pause_locks);
+      applyPollResult(r);
     });
   }
 
@@ -800,14 +800,16 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   }
 
   function pollData() {
-    return { action: 'poll', log_offset: HF_RECENT.offset, log_lists: JSON.stringify(HF_RECENT.lists) };
+    return { action: 'poll', log_offset: HF_RECENT.offset, log_lists: JSON.stringify(HF_RECENT.lists),
+             exclude_skip: (skipCb && skipCb.checked) ? '1' : '0' };
   }
 
-  // Shared handling for every poll response: refresh the log (respecting the
-  // skip-share filter) and the condensed recent-files panel.
+  // Shared handling for every poll response: refresh the log (the server already
+  // applied the skip-share filter, scanning as far back as needed to fill the
+  // line quota - see log_tail_lines()) and the condensed recent-files panel.
   function applyPollResult(r) {
     rawLog = r.log || '';
-    updateLog(filteredLog());
+    updateLog(rawLog);
     if (r.recent) {
       HF_RECENT = r.recent;
       renderRecent(HF_RECENT.lists);

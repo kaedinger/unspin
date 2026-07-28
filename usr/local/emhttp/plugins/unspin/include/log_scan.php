@@ -18,7 +18,14 @@ const UNSPIN_CHUNK_BYTES = 65536;
 // could exceed PHP's memory limit on a large log despite the daemon's own
 // size-based trim, since file() materializes every line as a PHP string).
 // (Ask me how I know)
-function log_tail_lines($log_file, $n) {
+//
+// $exclude, if set, is a substring whose matching lines are skipped entirely -
+// they don't count towards $n and don't appear in the output. Scanning keeps
+// going further back until $n surviving lines are found (or start-of-file),
+// so a burst of excluded noise (e.g. a flooding [skip share] share) can't
+// crowd out the last $n lines that actually matter - it's "keep scanning
+// until $n lines pass the filter", not "take the last $n lines, then filter".
+function log_tail_lines($log_file, $n, $exclude = null) {
     if (!file_exists($log_file)) return '';
     $fh = fopen($log_file, 'rb');
     if (!$fh) return '';
@@ -26,6 +33,9 @@ function log_tail_lines($log_file, $n) {
     $pos      = filesize($log_file);
     $leftover = '';
     $lines    = [];
+    $keep     = function ($line) use ($exclude) {
+        return $exclude === null || strpos($line, $exclude) === false;
+    };
 
     while ($pos > 0 && count($lines) < $n) {
         $read = min(UNSPIN_CHUNK_BYTES, $pos);
@@ -35,10 +45,10 @@ function log_tail_lines($log_file, $n) {
         $chunk    = explode("\n", $data);
         $leftover = array_shift($chunk);
         for ($i = count($chunk) - 1; $i >= 0 && count($lines) < $n; $i--) {
-            if ($chunk[$i] !== '') $lines[] = $chunk[$i];
+            if ($chunk[$i] !== '' && $keep($chunk[$i])) $lines[] = $chunk[$i];
         }
     }
-    if (count($lines) < $n && $leftover !== '') $lines[] = $leftover;
+    if (count($lines) < $n && $leftover !== '' && $keep($leftover)) $lines[] = $leftover;
     fclose($fh);
 
     return implode("\n", array_reverse($lines)) . "\n";

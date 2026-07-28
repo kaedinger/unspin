@@ -156,7 +156,10 @@ if ($action === 'save') {
 
 } elseif ($action === 'poll') {
     require_once __DIR__ . '/log_scan.php';
-    $log_lines = log_tail_lines($log_file, 200);
+    $poll_cfg     = load_cfg($cfg_file);
+    $log_tail_n   = (($poll_cfg['LOG_LEVEL'] ?? '') === 'debug') ? 1000 : 200;
+    $exclude_skip = ($_POST['exclude_skip'] ?? '') === '1';
+    $log_lines    = log_tail_lines($log_file, $log_tail_n, $exclude_skip ? '[skip share]' : null);
     $pause_dir = '/var/run/unspind.pause.d';
     $pause_locks = [];
     if (is_dir($pause_dir)) {
@@ -166,7 +169,6 @@ if ($action === 'save') {
     }
 
     $recent = null;
-    $poll_cfg = load_cfg($cfg_file);
     if (($poll_cfg['LOG_LEVEL'] ?? '') === 'debug') {
         $scan_paths = array_values(array_filter(array_map('trim',
             explode(',', $poll_cfg['SCAN_PATHS'] ?? ''))));

@@ -27,6 +27,8 @@
 - docs: note that "Exclude skipped shares" only filters the browser view - it shows nothing unless "Include excluded shares in Debug log" is also enabled
 - feat: "5 Recently Accessed Files" panels now show a time column for each entry
 - fix: recent-files panels now collapse to a single column on narrow or portrait screens
+- feat: Activity Log shows up to 1000 lines in Debug mode (was 200)
+- fix: prevent "Exclude skipped shares" show nothing in flooded log by doing actual log filtering
 
 ### 2026.07.10.38411
 - fix: on slow boots (arrays/ZFS pools can take 20-30 min to mount) the daemon can now wait for each scan path to actually mount before adding the fanotify watch (GH #3)
