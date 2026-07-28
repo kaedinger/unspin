@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.07.10.38411">
+  <!ENTITY version   "2026.07.28.37749">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,7 +19,7 @@
 >
 
 <CHANGES>
-### next
+### 2026.07.28.37749
 - fix: Scan Paths now rejects cache pool mounts, not just the share mount, both in the settings page and the daemon's own config validation
 - install: drop one-time `removepkg Unspin` migration line (legacy capital-U package name cleanup, no longer needed)
 - fix: race condition left the daemon unpaused despite active locks on two rc.unspin pause calls close together; daemon now polls pause-lock directory itself
@@ -28,7 +28,7 @@
 - feat: "5 Recently Accessed Files" panels now show a time column for each entry
 - fix: recent-files panels now collapse to a single column on narrow or portrait screens
 - feat: Activity Log shows up to 1000 lines in Debug mode (was 200)
-- fix: prevent "Exclude skipped shares" show nothing in flooded log by doing actual log filtering
+- feat: prevent "Exclude skipped shares" show nothing in flooded log by doing actual log filtering
 
 ### 2026.07.10.38411
 - fix: on slow boots (arrays/ZFS pools can take 20-30 min to mount) the daemon can now wait for each scan path to actually mount before adding the fanotify watch (GH #3)
