@@ -24,6 +24,7 @@
 - install: drop one-time `removepkg Unspin` migration line (legacy capital-U package name cleanup, no longer needed)
 - fix: race condition left the daemon unpaused despite active locks on two rc.unspin pause calls close together; daemon now polls pause-lock directory itself
 - fix: rc.unspin usage/help text implied every subcommand takes a lock name; start/stop/restart/status take none and toggle's name is optional
+- docs: note that "Exclude skipped shares" only filters the browser view - it shows nothing unless "Include excluded shares in Debug log" is also enabled
 
 ### 2026.07.10.38411
 - fix: on slow boots (arrays/ZFS pools can take 20-30 min to mount) the daemon can now wait for each scan path to actually mount before adding the fanotify watch (GH #3)

@@ -595,6 +595,7 @@ dt.hf-share-name {
 
 <label style="display:block;margin-bottom:8px;">
   <input type="checkbox" id="hf-exclude-skipped"> Exclude skipped shares
+  <span style="color:#888;font-size:0.85em;margin-left:6px;">(filters this view only - won't show anything unless "Include excluded shares in Debug log" above is also set to Yes)</span>
 </label>
 
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
