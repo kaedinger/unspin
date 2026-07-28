@@ -227,6 +227,16 @@ dt.hf-share-name {
 }
 .recent-col { width: 70px; white-space: nowrap; }
 .recent-col-skip { width: 140px; white-space: nowrap; }
+.recent-col-time { width: 62px; white-space: nowrap; color: #888; }
+
+.recent-disks-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 700px), (orientation: portrait) {
+  .recent-disks-grid { grid-template-columns: 1fr; }
+}
 </style>
 
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
@@ -566,7 +576,7 @@ dt.hf-share-name {
 
 <div id="recent-panel" style="margin-bottom:12px;<?= ($c['LOG_LEVEL'] ?? '') === 'debug' ? '' : 'display:none;' ?>">
   <strong style="display:block;margin-bottom:10px;">5 Recently Accessed Files</strong>
-  <div id="recent-disks" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+  <div id="recent-disks" class="recent-disks-grid">
 <?php foreach ($recent_lists as $disk => $entries): ?>
     <div class="recent-disk hf-bordered" data-disk="<?= htmlspecialchars($disk) ?>">
       <div class="recent-disk-title"><?= htmlspecialchars($disk) ?></div>
@@ -581,6 +591,7 @@ dt.hf-share-name {
 <?php else: ?>
             <td class="recent-col-skip" colspan="2">Skipped</td>
 <?php endif; ?>
+            <td class="recent-col-time" title="<?= htmlspecialchars($e['timestamp']) ?>"><?= htmlspecialchars(substr($e['timestamp'], 11)) ?></td>
           </tr>
 <?php endforeach; ?>
 <?php if (empty($entries)): ?>
@@ -704,6 +715,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
         } else {
           html += '<td class="recent-col-skip" colspan="2">Skipped</td>';
         }
+        html += '<td class="recent-col-time" title="' + e.timestamp + '">' + e.timestamp.slice(11) + '</td>';
         html += '</tr>';
       });
       html += '</tbody></table></div>';
