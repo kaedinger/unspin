@@ -105,6 +105,11 @@
   Install/upgrade the plugin package (TXZ archive)
   ============================================================
 -->
+<FILE Name="/tmp/&name;.txz">
+<URL>https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz</URL>
+<SHA256>27bf182d050b2e06cc2484cf38586624068ca34cf87cce7862c1f44351c1ea04</SHA256>
+</FILE>
+
 <FILE Run="/bin/bash">
 <INLINE>
 echo "                                                       "
@@ -151,7 +156,6 @@ echo ""
 removepkg &name; 2>/dev/null
 
 # Download and install the package
-wget -q -O /tmp/&name;.txz "https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz"
 installpkg /tmp/&name;.txz
 rm -f /tmp/&name;.txz
 </INLINE>
