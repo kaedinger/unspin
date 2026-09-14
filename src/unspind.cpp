@@ -37,6 +37,7 @@
 
 static constexpr size_t     COPY_CHUNK_BYTES     = 1u << 20;           // 1 MiB per sendfile call
 static constexpr int        CLEANUP_INTERVAL_SEC = 3600;               // 1 h between access-map cleanups
+static constexpr int        SUBMOUNT_RESCAN_INTERVAL_SEC = 60;         // how often to check for newly-created dataset mounts
 static constexpr int        POLL_TIMEOUT_MS      = 5000;               // fanotify poll wait
 static constexpr size_t     FAN_BUF_BYTES        = 65536;              // fanotify read buffer
 static constexpr int        MOVER_CACHE_SEC      = 5;                  // how long to cache mover-active result
@@ -102,6 +103,12 @@ struct Config {
 };
 
 static Config _cfg;
+
+// Mount points already fanotify-marked one level under a scan path (see
+// mark_submounts() below). Rebuilt from scratch each time init_fanotify()
+// gets a fresh fd; grown incrementally by the periodic rescan in main().
+static std::unordered_set<std::string> _marked_submounts;
+static time_t _last_submount_scan = 0;
 
 enum class EvType { Read, Open, CloseNoWrite, CloseWrite, Modify };
 
@@ -1161,6 +1168,30 @@ static bool mark_path(int fd, const std::string& path) {
                          FAN_WATCH_MASK, AT_FDCWD, path.c_str()) == 0;
 }
 
+// Datasets Unraid auto-creates for a ZFS array disk's top-level shares mount as
+// separate filesystems nested one level under the disk mount (GH #8). FAN_MARK_MOUNT
+// does not cross into a nested mount, so each dataset needs its own explicit mark.
+// Only one level deep: Unraid only auto-creates datasets for top-level shares, never
+// nested subfolders.
+static void mark_submounts(int fd, const std::string& base,
+                            std::unordered_set<std::string>& known) {
+    DIR* d = opendir(base.c_str());
+    if (!d) return;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != nullptr) {
+        if (ent->d_name[0] == '.') continue;
+        std::string child = base + "/" + ent->d_name;
+        if (known.count(child)) continue;
+        struct stat st;
+        if (lstat(child.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        if (is_mounted(child) && mark_path(fd, child)) {
+            log_info("Watching nested mount at: " + child);
+            known.insert(child);
+        }
+    }
+    closedir(d);
+}
+
 // Block up to `secs` seconds, returning early when a signal is delivered.
 // poll() is never auto-restarted by SA_RESTART on Linux (the reason the main
 // loop's EINTR handling works), so SIGTERM/SIGINT make it return at once; the
@@ -1177,13 +1208,18 @@ static int init_fanotify() {
         return -1;
     }
 
+    // A fresh fd carries no marks, so any previously-tracked submounts are gone too.
+    _marked_submounts.clear();
+
     // First pass: mark every path that is already mounted; collect the rest.
     std::vector<std::string> pending;
     for (const auto& path : _cfg.scan_paths) {
-        if (is_mounted(path) && mark_path(fd, path))
+        if (is_mounted(path) && mark_path(fd, path)) {
             log_info("Watching mount at: " + path);
-        else
+            mark_submounts(fd, path, _marked_submounts);
+        } else {
             pending.push_back(path);
+        }
     }
 
     auto join_csv = [](const std::vector<std::string>& v) {
@@ -1209,6 +1245,7 @@ static int init_fanotify() {
             for (auto it = pending.begin(); it != pending.end(); ) {
                 if (is_mounted(*it) && mark_path(fd, *it)) {
                     log_info("Watching mount at: " + *it + " (after wait)");
+                    mark_submounts(fd, *it, _marked_submounts);
                     it = pending.erase(it);
                 } else {
                     ++it;
@@ -1364,6 +1401,15 @@ int main(int argc, char* argv[]) {
         if (ret == 0) {
             // Poll timeout - refresh transfer state so "finished" is logged promptly
             transfers_active();
+
+            // Pick up dataset mounts created on the fly (e.g. a ZFS share used for
+            // the first time) without waiting for a restart or SIGHUP (GH #8).
+            time_t now = time(nullptr);
+            if (now - _last_submount_scan >= SUBMOUNT_RESCAN_INTERVAL_SEC) {
+                _last_submount_scan = now;
+                for (const auto& path : _cfg.scan_paths)
+                    if (is_mounted(path)) mark_submounts(fan_fd, path, _marked_submounts);
+            }
             continue;
         }
         if (pfd.revents & POLLIN)

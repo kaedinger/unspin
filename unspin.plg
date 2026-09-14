@@ -23,6 +23,7 @@
 - fix: a promotion could get stuck forever if a file's open/close counts drifted out of sync (e.g. repeated Explorer opens over SMB); now promotes anyway after 30 min of inactivity
 - install: plugin download is now verified against a declared SHA256 and cached on the flash, instead of an unverified fetch to /tmp on every boot (required by Community Applications); removing the plugin does not delete the cached package - it stays on the flash alongside the preserved config
 - pkg: `make package` now computes and writes that SHA256 into unspin.plg automatically so it can't drift from the shipped file
+- fix: shares on ZFS array disks were invisible to promotion since each is its own dataset/mount that fanotify's disk-level watch doesn't cross; now marks those nested mounts too, at startup and periodically (GH #8)
 
 ### 2026.07.28.37749
 - fix: Scan Paths now rejects cache pool mounts, not just the share mount, both in the settings page and the daemon's own config validation
