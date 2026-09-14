@@ -49,6 +49,7 @@ There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mo
 - **Detected Shares table** - the settings page lists every share with its current routing and a per-share Watch toggle to opt individual shares out without changing Unraid's settings
 - **Mover/rsync-aware** - Unraid's mover is always detected and pauses Unspin; other tools that move files via `rsync` (e.g. Unbalanced, or Mover Tuning) can optionally pause it too via `PAUSE_ON_RSYNC` - if you use Mover Tuning, make sure this is enabled!
 - **Mount-wait on boot** - waits for slow-mounting arrays/pools before watching a scan path; posts an Unraid notification if it has to wait, and another if the wait times out
+- **ZFS array disk support** - a top-level share on a ZFS-formatted array disk becomes its own dataset mount under the hood; Unspin detects and watches those automatically, both at startup and as new ones appear, so ZFS array disks work the same as XFS/Btrfs
 - **Recently Accessed Files panel** - on debug logging, the settings page shows the last 5 accessed files per disk (read count, promoted state) plus skipped-share hits, scraped from the log itself
 - **Per-pool fill guard** - each pool gets its own fill % threshold; promotion to that pool stops once it's exceeded
 - **Dry-run mode** - logs every decision without moving anything
