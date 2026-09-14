@@ -12,7 +12,7 @@ BUILD    := build/$(PLUGIN)-$(VERSION)
 CXX      := g++
 CXXFLAGS := -O2 -Wall -std=c++17
 
-.PHONY: all build-daemon package clean update-plg install-local
+.PHONY: all build-daemon package clean update-plg update-plg-hash install-local
 
 all: build-daemon package
 
@@ -46,10 +46,19 @@ package:
 
 	@echo "✓ Package: $(PKG_DIR)/$(PLUGIN)-$(VERSION)-x86_64-1.txz"
 
+	@$(MAKE) --no-print-directory update-plg-hash VERSION=$(VERSION)
+
 # Update the version string in the .plg so it matches
 update-plg:
 	@sed -i "s|<!ENTITY version.*|<!ENTITY version   \"$(VERSION)\">|" $(PLG_FILE)
 	@echo "✓ Updated .plg version to $(VERSION)"
+
+# Compute the sha256 of the just-built TXZ and inject it into the .plg's <SHA256>
+# tag. Called at the end of `package`.
+update-plg-hash:
+	@HASH=$$(sha256sum $(PKG_DIR)/$(PLUGIN)-$(VERSION)-x86_64-1.txz | cut -d' ' -f1); \
+	sed -i "s|<SHA256>.*</SHA256>|<SHA256>$$HASH</SHA256>|" $(PLG_FILE); \
+	echo "✓ Updated .plg SHA256 to $$HASH"
 
 clean:
 	@rm -rf build/

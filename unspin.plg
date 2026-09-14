@@ -21,6 +21,8 @@
 <CHANGES>
 ### next
 - fix: a promotion could get stuck forever if a file's open/close counts drifted out of sync (e.g. repeated Explorer opens over SMB); now promotes anyway after 30 min of inactivity
+- install: plugin download is now verified against a declared SHA256 and cached on the flash, instead of an unverified fetch to /tmp on every boot (required by Community Applications); removing the plugin does not delete the cached package - it stays on the flash alongside the preserved config
+- pkg: `make package` now computes and writes that SHA256 into unspin.plg automatically so it can't drift from the shipped file
 
 ### 2026.07.28.37749
 - fix: Scan Paths now rejects cache pool mounts, not just the share mount, both in the settings page and the daemon's own config validation
@@ -108,6 +110,11 @@
   Install/upgrade the plugin package (TXZ archive)
   ============================================================
 -->
+<FILE Name="/boot/config/plugins/&name;/&name;.txz">
+<URL>https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz</URL>
+<SHA256>PLACEHOLDER</SHA256>
+</FILE>
+
 <FILE Run="/bin/bash">
 <INLINE>
 echo "                                                       "
@@ -153,10 +160,8 @@ echo ""
 # Remove old version if present
 removepkg &name; 2>/dev/null
 
-# Download and install the package
-wget -q -O /tmp/&name;.txz "https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz"
-installpkg /tmp/&name;.txz
-rm -f /tmp/&name;.txz
+# Install the package (fetched above by the installer, verified against SHA256)
+installpkg /boot/config/plugins/&name;/&name;.txz
 </INLINE>
 </FILE>
 
