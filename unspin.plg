@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unspin">
   <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.09.14.59405">
+  <!ENTITY version   "2026.09.18.38737">
   <!ENTITY launch    "Utilities/Unspin">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
   <!ENTITY pluginURL "&gitURL;/unspin.plg">
@@ -19,7 +19,7 @@
 >
 
 <CHANGES>
-### next
+### 2026.09.18.38737
 - ci: release workflow now pushes the SHA256-corrected unspin.plg back to main after building, so the live pluginURL no longer serves a stale hash that silently fails install verification
 
 ### 2026.09.14.59405
