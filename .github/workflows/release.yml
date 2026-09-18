@@ -9,12 +9,17 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Compile unspind
         run: make build-daemon
@@ -24,6 +29,21 @@ jobs:
 
       - name: Update .plg version
         run: make update-plg VERSION=${{ github.ref_name }}
+
+      # `make package` (above) already recomputes the SHA256 of the just-built TXZ
+      # and writes it into unspin.plg, but that only changes this runner's checkout.
+      # pluginURL points at raw.githubusercontent.com/main/unspin.plg, so unless we
+      # push the corrected file back to main, everyone keeps fetching whatever
+      # (stale) hash was last committed by hand - which silently breaks installs.
+      - name: Publish corrected .plg to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add unspin.plg
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: sync unspin.plg version/SHA256 for ${{ github.ref_name }}"
+            git push origin HEAD:main
+          fi
 
       - name: Create GitHub Release
         env:

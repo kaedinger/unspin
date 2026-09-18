@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- ci: release workflow now pushes the SHA256-corrected unspin.plg back to main after building, so the live pluginURL no longer serves a stale hash that silently fails install verification
+
 ### 2026.09.14.59405
 - fix: a promotion could get stuck forever if a file's open/close counts drifted out of sync (e.g. repeated Explorer opens over SMB); now promotes anyway after 30 min of inactivity
 - install: plugin download is now verified against a declared SHA256 and cached on the flash, instead of an unverified fetch to /tmp on every boot (required by Community Applications); removing the plugin does not delete the cached package - it stays on the flash alongside the preserved config
