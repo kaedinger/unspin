@@ -1,11 +1,11 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
-  <!ENTITY name      "unspin">
-  <!ENTITY author    "kaedinger">
-  <!ENTITY version   "2026.09.18.38737">
-  <!ENTITY launch    "Utilities/Unspin">
-  <!ENTITY gitURL    "https://raw.githubusercontent.com/kaedinger/unspin/main">
-  <!ENTITY pluginURL "&gitURL;/unspin.plg">
+  <!ENTITY name       "unspin">
+  <!ENTITY author     "kaedinger">
+  <!ENTITY version    "2026.09.18.38737">
+  <!ENTITY launch     "Utilities/Unspin">
+  <!ENTITY releaseURL "https://github.com/kaedinger/unspin/releases/latest/download">
+  <!ENTITY pluginURL  "&releaseURL;/unspin.plg">
 ]>
 
 <PLUGIN
@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- install: pluginURL now points at the latest GitHub release asset instead of a copy on main, so update checks always match the exact build that was hashed and uploaded
+
 ### 2026.09.18.38737
 - ci: release workflow now pushes the SHA256-corrected unspin.plg back to main after building, so the live pluginURL no longer serves a stale hash that silently fails install verification
 
