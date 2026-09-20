@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name       "unspin">
   <!ENTITY author     "kaedinger">
-  <!ENTITY version    "2026.09.20.50926">
+  <!ENTITY version   "2026.09.20.50926">
   <!ENTITY launch     "Utilities/Unspin">
   <!ENTITY releaseURL "https://github.com/kaedinger/unspin/releases/latest/download">
   <!ENTITY pluginURL  "&releaseURL;/unspin.plg">
@@ -119,7 +119,7 @@
 -->
 <FILE Name="/boot/config/plugins/&name;/&name;.txz">
 <URL>https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz</URL>
-<SHA256>67a9a42aa03c8f6db08ff040ce9123432a16ca10985af33dbb07c5d93a3a41d2</SHA256>
+<SHA256>8a9c5f7fa1d181c5369846f556424dda572b81bb21953556ba8060fd05d4b078</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">
