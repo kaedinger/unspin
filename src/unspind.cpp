@@ -38,12 +38,12 @@
 
 static constexpr size_t     COPY_CHUNK_BYTES     = 1u << 20;           // 1 MiB per sendfile call
 static constexpr int        CLEANUP_INTERVAL_SEC = 3600;               // 1 h between access-map cleanups
-static constexpr int        SUBMOUNT_RESCAN_INTERVAL_SEC = 60;         // how often to check for newly-created dataset mounts
+static constexpr int        PERIODIC_CHECK_INTERVAL_SEC = 60;          // new dataset mounts, pool access times, stale pending promotions
 static constexpr int        POLL_TIMEOUT_MS      = 5000;               // fanotify poll wait
 static constexpr size_t     FAN_BUF_BYTES        = 65536;              // fanotify read buffer
 static constexpr int        MOVER_CACHE_SEC      = 5;                  // how long to cache mover-active result
 static constexpr int        PAUSE_DIR_CACHE_SEC  = 2;                  // how long to cache the pause-lock-directory scan
-static constexpr int        PENDING_PROMOTE_STALE_SEC = 30 * 60;       // force a stuck deferred promotion through after this long with zero events
+static constexpr int        PENDING_PROMOTE_STALE_SEC = 10 * 60;       // force a stuck deferred promotion through after this long with zero events
 static constexpr uint64_t   FAN_WATCH_MASK       = FAN_ACCESS | FAN_OPEN | FAN_CLOSE_NOWRITE
                                                  | FAN_CLOSE_WRITE | FAN_MODIFY;
 static constexpr int64_t    KB                   = 1024;
@@ -110,7 +110,7 @@ static Config _cfg;
 // mark_submounts() below). Rebuilt from scratch each time init_fanotify()
 // gets a fresh fd; grown incrementally by the periodic rescan in main().
 static std::unordered_set<std::string> _marked_submounts;
-static time_t _last_submount_scan = 0;
+static time_t _last_periodic_check = 0;
 
 enum class EvType { Read, Open, CloseNoWrite, CloseWrite, Modify };
 
@@ -926,7 +926,7 @@ static PromoteDecision should_promote(const AccessRecord& rec, int64_t size) {
 }
 
 // Attempt an immediate promotion (transfer / fill checks included). Shared by
-// handle_event() (right after a rule fires) and maybe_cleanup() (recovering a
+// handle_event() (right after a rule fires) and promote_stale_pending() (recovering a
 // promotion that's been stuck pending on a file whose open_count never made
 // it back to zero - see PENDING_PROMOTE_STALE_SEC).
 static void try_promote(const std::string& path, int64_t size, const std::string& sname,
@@ -1124,6 +1124,11 @@ static void handle_event(const std::string& path, EvType ev) {
                               " (" + human_size(size) + ") - " + dec.reason);
                     evaluate();
                 }
+            } else {
+                // A previous close already ended the open session (several handles
+                // open at once). Logged so open_count drift is visible (GH #10).
+                log_debug("Close (outside open session) " + path + " (" + human_size(size) +
+                          ") open_count=" + std::to_string(rec.open_count));
             }
 
             // Execute any promotion deferred while the file was open.
@@ -1147,7 +1152,6 @@ static void maybe_cleanup() {
 
     auto cutoff = now - (time_t)_cfg.large_long_window_hours * 3600;
     auto before = _access_map.size();
-    auto paused = is_paused();
 
     for (auto it = _access_map.begin(); it != _access_map.end(); ) {
         // Remove promoted entries and entries that haven't been accessed within the window
@@ -1155,37 +1159,41 @@ static void maybe_cleanup() {
             it = _access_map.erase(it);
             continue;
         }
-
-        // A deferred promotion can get stuck forever if open_count drifts out of
-        // sync with reality - e.g. fanotify pairing more Opens than Closes for the
-        // same path (seen with repeated Explorer icon-extraction opens over SMB),
-        // so open_count never returns to 0 and the close-triggered promotion never
-        // runs. If the path has gone completely quiet for a while, nothing is
-        // realistically still reading it, so push the promotion through anyway
-        // instead of waiting forever.
-        auto& rec = it->second;
-        if (!paused && rec.pending_promote && now - rec.last_event >= PENDING_PROMOTE_STALE_SEC) {
-            struct stat st;
-            auto sname = path_share_name(it->first);
-            if (lstat(it->first.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
-                !sname.empty() && share_promotable(sname)) {
-                PromoteDecision dec = rec.pending_dec;
-                rec.pending_promote = false;
-                log_info("[" + dec.rule + "] Stale pending promotion (" +
-                         std::to_string(PENDING_PROMOTE_STALE_SEC / 60) +
-                         " min quiet, open_count=" + std::to_string(rec.open_count) +
-                         "), promoting anyway: " + it->first);
-                try_promote(it->first, (int64_t)st.st_size, sname, rec, dec);
-            } else {
-                rec.pending_promote = false; // gone, no longer a regular file, or no longer promotable
-            }
-        }
-
         ++it;
     }
 
     log_info("Access map cleanup: " + std::to_string(before) + " -> " +
              std::to_string(_access_map.size()) + " entries");
+}
+
+// A deferred promotion can get stuck forever if open_count drifts out of sync
+// with reality - e.g. fanotify pairing more Opens than Closes for the same path
+// (seen with repeated Explorer icon-extraction opens over SMB, and with the
+// kernel merging identical queued close events), so open_count never returns
+// to 0 and the close-triggered promotion never runs. If the path has gone
+// completely quiet for a while, nothing is realistically still reading it, so
+// push the promotion through anyway instead of waiting forever.
+// Called every PERIODIC_CHECK_INTERVAL_SEC (GH #10).
+static void promote_stale_pending() {
+    if (is_paused()) return;
+    auto now = time(nullptr);
+    for (auto& [path, rec] : _access_map) {
+        if (!rec.pending_promote || now - rec.last_event < PENDING_PROMOTE_STALE_SEC) continue;
+        struct stat st;
+        auto sname = path_share_name(path);
+        if (lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+            !sname.empty() && share_promotable(sname)) {
+            PromoteDecision dec = rec.pending_dec;
+            rec.pending_promote = false;
+            log_info("[" + dec.rule + "] Stale pending promotion (" +
+                     std::to_string(PENDING_PROMOTE_STALE_SEC / 60) +
+                     " min quiet, open_count=" + std::to_string(rec.open_count) +
+                     "), promoting anyway: " + path);
+            try_promote(path, (int64_t)st.st_size, sname, rec, dec);
+        } else {
+            rec.pending_promote = false; // gone, no longer a regular file, or no longer promotable
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1534,7 +1542,7 @@ static void revert_atime_zfs(const std::string& pool) {
     write_lines(ATIME_ZFS_STATE, keep);
 }
 
-// Called at startup, on SIGHUP and every SUBMOUNT_RESCAN_INTERVAL_SEC.
+// Called at startup, on SIGHUP and every PERIODIC_CHECK_INTERVAL_SEC.
 static void check_pool_atime() {
     if (_cfg.enable_pool_atime) {
         unlink(ATIME_REVERT_NOW.c_str());
@@ -1701,8 +1709,9 @@ int main(int argc, char* argv[]) {
         // Checked on every pass, not only on poll timeouts: a busy server may
         // never go POLL_TIMEOUT_MS without a file event.
         time_t now = time(nullptr);
-        if (now - _last_submount_scan >= SUBMOUNT_RESCAN_INTERVAL_SEC) {
-            _last_submount_scan = now;
+        if (now - _last_periodic_check >= PERIODIC_CHECK_INTERVAL_SEC) {
+            _last_periodic_check = now;
+            promote_stale_pending();
             // Pick up dataset mounts created on the fly (e.g. a ZFS share used for
             // the first time) without waiting for a restart or SIGHUP (GH #8).
             for (const auto& path : _cfg.scan_paths)
