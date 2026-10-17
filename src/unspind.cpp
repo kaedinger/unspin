@@ -29,6 +29,7 @@
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/vfs.h>
 #include <unistd.h>
 
 // ---------------------------------------------------------------------------
@@ -597,11 +598,56 @@ static void log_config() {
 // Disk utilities
 // ---------------------------------------------------------------------------
 
+static constexpr unsigned long ZFS_SUPER_MAGIC = 0x2fc12fc1;
+
+// Source (device / dataset name) of the mount that contains path, i.e. the
+// longest mountpoint in /proc/self/mounts that is a prefix of path.
+static std::string mount_source(const std::string& path) {
+    std::ifstream f("/proc/self/mounts");
+    std::string line, best_src;
+    size_t best_len = 0;
+    while (std::getline(f, line)) {
+        std::istringstream ss(line);
+        std::string src, mnt;
+        if (!(ss >> src >> mnt)) continue;
+        bool under = path == mnt || mnt == "/" ||
+                     (path.compare(0, mnt.size(), mnt) == 0 && path[mnt.size()] == '/');
+        if (under && mnt.size() >= best_len) { best_len = mnt.size(); best_src = src; }
+    }
+    return best_src;
+}
+
+// statvfs on a ZFS dataset only counts the dataset's own data (not child
+// datasets or snapshots), so a pool whose shares are child datasets looks
+// nearly empty. Ask zfs instead: "used" of the dataset includes its children.
+static bool zfs_fill_percent(const std::string& path, double& pct) {
+    auto ds = mount_source(path);
+    if (ds.empty() || ds.find('\'') != std::string::npos) return false;
+    auto cmd = "zfs get -Hp -o value used,available '" + ds + "' 2>/dev/null";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return false;
+    unsigned long long used = 0, avail = 0;
+    int n = fscanf(p, "%llu %llu", &used, &avail);
+    pclose(p);
+    if (n != 2 || used + avail == 0) return false;
+    pct = 100.0 * (double)used / (double)(used + avail);
+    return true;
+}
+
 static double disk_fill_percent(const std::string& path) {
+    struct statfs sf;
+    double pct;
+    if (statfs(path.c_str(), &sf) == 0 && (unsigned long)sf.f_type == ZFS_SUPER_MAGIC &&
+        zfs_fill_percent(path, pct))
+        return pct;
+
+    // Same calculation as df: reserved blocks count as neither used nor available.
     struct statvfs sv;
-    if (statvfs(path.c_str(), &sv) != 0  ||  sv.f_blocks == 0) 
+    if (statvfs(path.c_str(), &sv) != 0  ||  sv.f_blocks == 0)
         return 100.0;
-    return 100.0 * (double)(sv.f_blocks - sv.f_bfree) / (double)sv.f_blocks;
+    auto used = (double)(sv.f_blocks - sv.f_bfree);
+    auto total = used + (double)sv.f_bavail;
+    return total > 0 ? 100.0 * used / total : 100.0;
 }
 
 // Live check - mover always counted, rsync only if PAUSE_ON_RSYNC is set.

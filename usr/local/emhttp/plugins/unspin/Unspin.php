@@ -23,6 +23,25 @@ function fmt_bytes($n) {
     return ($v >= 100 ? round($v) : round($v, 1)) . ' ' . $u[$i];
 }
 
+// [total, used] bytes for a pool mount, or null. On ZFS, disk_total_space() and
+// disk_free_space() only count the top-level dataset's own data (not child
+// datasets or snapshots), so ask zfs: "used" of the dataset includes its children.
+function pool_usage($mnt) {
+    foreach (@file('/proc/self/mounts') ?: [] as $line) {
+        $f = explode(' ', $line);
+        if (count($f) < 3 || $f[1] !== $mnt || $f[2] !== 'zfs') continue;
+        $out = [];
+        exec('zfs get -Hp -o value used,available ' . escapeshellarg($f[0]) . ' 2>/dev/null', $out, $rc);
+        if ($rc === 0 && count($out) === 2 && is_numeric($out[0]) && is_numeric($out[1]))
+            return [(float)$out[0] + (float)$out[1], (float)$out[0]];
+        break;
+    }
+    $total = @disk_total_space($mnt);
+    $free  = @disk_free_space($mnt);
+    if (!$total || $free === false) return null;
+    return [$total, $total - $free];
+}
+
 function opt($val, $current, $label) {
     $sel = ($current === $val) ? ' selected' : '';
     return "<option value=\"" . htmlspecialchars($val) . "\"$sel>" . htmlspecialchars($label) . "</option>";
@@ -428,11 +447,10 @@ dt.hf-share-name {
       $key      = 'MAX_FILL_PERCENT_' . $pool;
       $val      = isset($c[$key]) && is_numeric($c[$key]) ? intval($c[$key]) : $legacy_fill;
       $mnt      = '/mnt/' . $pool;
-      $total    = @disk_total_space($mnt);
-      $free     = @disk_free_space($mnt);
+      $usage    = pool_usage($mnt);
       $size_str = '';
-      if ($total && $free !== false) {
-          $used    = $total - $free;
+      if ($usage) {
+          [$total, $used] = $usage;
           $pct     = $total > 0 ? round($used * 100 / $total) : 0;
           $size_str = fmt_bytes($total) . ', ' . $pct . '% used';
       }

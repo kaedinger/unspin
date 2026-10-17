@@ -19,6 +19,10 @@
 >
 
 <CHANGES>
+### next
+- fix: ZFS pools were measured as nearly empty when shares are child datasets, so Pool Fill Limits never applied and the settings page showed 0% used. ZFS pool usage now comes from `zfs get used,available` (GH #11)
+- non-ZFS pool fill is now calculated like `df` (reserved blocks excluded)
+
 ### 2026.09.20.50926
 - install: pluginURL now points at the latest GitHub release asset instead of a copy on main, so update checks always match the exact build that was hashed and uploaded
 
