@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name       "unspin">
   <!ENTITY author     "kaedinger">
-  <!ENTITY version   "2026.09.20.50926">
+  <!ENTITY version   "2026.10.17.48740">
   <!ENTITY launch     "Utilities/Unspin">
   <!ENTITY releaseURL "https://github.com/kaedinger/unspin/releases/latest/download">
   <!ENTITY pluginURL  "&releaseURL;/unspin.plg">
@@ -19,7 +19,7 @@
 >
 
 <CHANGES>
-### next
+### 2026.10.17.48740
 - fix: ZFS pools were measured as nearly empty when shares are child datasets, so Pool Fill Limits never applied and the settings page showed 0% used. ZFS pool usage now comes from `zfs get used,available` (GH #11)
 - non-ZFS pool fill is now calculated like `df` (reserved blocks excluded)
 - promoted files now get the promotion time as their access time (modification time is still kept), so Mover Tuning's ATIME filter no longer demotes them on its next run (GH #9)
