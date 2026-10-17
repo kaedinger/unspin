@@ -344,6 +344,15 @@ dt.hf-share-name {
     <div class="hf-help">Pause monitoring while any <code>rsync</code> process is running on the system. Unraid's Mover always pauses Unspin regardless of this setting. Tools like <em>Unbalanced</em> and <em>Mover Tuning</em> use rsync to move files between array disks - leaving this enabled prevents their activity from inflating access counters and triggering false promotions. <strong>Default: Yes.</strong></div>
   </dd>
 
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Access Times</dt>
+  <dd>
+    <select name="ENABLE_POOL_ATIME" id="hf_ENABLE_POOL_ATIME">
+      <?= opt('yes', $c['ENABLE_POOL_ATIME'] ?? 'no', 'Yes') ?>
+      <?= opt('no',  $c['ENABLE_POOL_ATIME'] ?? 'no', 'No') ?>
+    </select>
+    <div class="hf-help">Turn access times on for the pools Unspin promotes into, so <em>Mover Tuning</em>'s <strong>Use ATIME</strong> filter moves files back to the array only once they haven't been read for a while. Unraid mounts all pools with <code>noatime</code>, so without this a file's access time never changes. Btrfs/XFS pools are remounted with <code>relatime</code> (re-applied after every array start); on ZFS pools the <code>atime</code> and <code>relatime</code> properties are set to <code>on</code> (ZFS support is untested). Pools that already have access times on are left alone, and switching this off only undoes Unspin's own changes - you can choose to do that right away or at the next array start. <strong>Default: No.</strong></div>
+  </dd>
+
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Mount Wait Timeout</dt>
   <dd>
     <div class="hf-row">
@@ -652,6 +661,7 @@ dt.hf-share-name {
 
 <script>
 var HF_DEFAULTS = <?= json_encode($defaults) ?>;
+var HF_ATIME_SAVED = <?= json_encode($c['ENABLE_POOL_ATIME'] ?? 'no') ?>;
 var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_encode($recent_lists) ?> };
 (function () {
   var EXEC = '/plugins/unspin/include/exec.php';
@@ -839,17 +849,35 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
                 'LARGE_SHORT_MIN_ACCESSES','LARGE_SHORT_WINDOW_MINS',
                 'LARGE_LONG_MIN_ACCESSES','LARGE_LONG_WINDOW_HOURS',
                 'EXCLUDE_PATTERNS','DRY_RUN','LOG_LEVEL','LOG_EXCLUDED_SHARES',
-                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC',
+                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC','ENABLE_POOL_ATIME',
                 'MOUNT_WAIT_TIMEOUT_MINS','MOUNT_RETRY_INTERVAL_SECS',
                 'RULE1_ENABLED','RULE1_FALLTHROUGH','RULE2_ENABLED','RULE3_ENABLED',
                 'RULE3_MIN_READS'];
 
-  window.hfSave = function () {
+  // Switching Pool Access Times off: undo Unspin's changes now or at the next array start?
+  function hfAskAtimeOff(cb) {
+    var text = 'Turn access times off on the pools Unspin enabled them on now, or at the next array start?';
+    if (typeof swal === 'function') {
+      swal({ title: 'Pool Access Times', text: text, type: 'warning', showCancelButton: true,
+             confirmButtonText: 'Now', cancelButtonText: 'At next array start' },
+           function (now) { cb(now ? 'now' : 'later'); });
+    } else {
+      cb(confirm(text + '\n\nOK = now, Cancel = at the next array start') ? 'now' : 'later');
+    }
+  }
+
+  window.hfSave = function (atimeOff) {
+    var atimeEl = document.getElementById('hf_ENABLE_POOL_ATIME');
+    if (atimeOff === undefined && atimeEl && HF_ATIME_SAVED === 'yes' && atimeEl.value === 'no') {
+      hfAskAtimeOff(hfSave);
+      return;
+    }
     var toggleBtn  = document.getElementById('hf-toggle-btn');
     var wasRunning = document.getElementById('hf-status').textContent.trim() === 'Running';
     setBusy(applyBtn, 'Applying\u2026');
     if (toggleBtn && wasRunning) setBusy(toggleBtn, 'Stopping\u2026');
     var data = { action: 'save' };
+    if (atimeOff) data.ATIME_OFF = atimeOff;
     fields.forEach(function (f) {
       var el = document.getElementById('hf_' + f);
       if (el) data[f] = el.value;
@@ -872,6 +900,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
         document.querySelectorAll('input[data-hf-pool="1"]').forEach(function (el) {
           if (r.cfg[el.name] !== undefined) el.value = r.cfg[el.name];
         });
+        if (r.cfg.ENABLE_POOL_ATIME !== undefined) HF_ATIME_SAVED = r.cfg.ENABLE_POOL_ATIME;
         var panel = document.getElementById('recent-panel');
         if (panel) panel.style.display = r.cfg.LOG_LEVEL === 'debug' ? '' : 'none';
       }

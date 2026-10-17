@@ -123,6 +123,7 @@ unspin/
 | `RULE3_ENABLED` | `yes` | Enable large-file long-window rule |
 | `RULE3_MIN_READS` | `5` | Thumbnail filter: skip opens with fewer reads than this (0 = disabled) |
 | `PAUSE_ON_RSYNC` | `yes` | Also pause while any `rsync` process is running (covers tools like Unbalanced or Mover Tuning's rsync-based transfers). Unraid's mover itself is always detected regardless of this setting. |
+| `ENABLE_POOL_ATIME` | `no` | Turn access times on for the pools Unspin promotes into, for Mover Tuning's "Use ATIME" filter (see below). Btrfs/XFS pools are remounted `relatime` (re-applied after every array start); ZFS datasets get `atime=on relatime=on` (untested). Switching it off only undoes Unspin's own changes, now or at the next array start. |
 | `DRY_RUN` | `yes` | Log promotion decisions without moving files |
 | `LOG_LEVEL` | `info` | `info` or `debug` |
 | `LOG_EXCLUDED_SHARES` | `no` | On debug logging, also log skipped-share accesses (off by default so a noisy excluded share doesn't crowd out other shares' history) |
@@ -130,6 +131,10 @@ unspin/
 | `LOG_TRIM_SIZE_MB` | `5` | Size the log is trimmed down to (whole lines kept) |
 | `MOUNT_WAIT_TIMEOUT_MINS` | `45` | Max minutes to wait for each scan path to mount at boot (0 = don't wait) |
 | `MOUNT_RETRY_INTERVAL_SECS` | `30` | Seconds between mount re-checks while waiting |
+
+### Using Unspin with Mover Tuning
+
+Unspin promotes files because they are read, so the natural way to demote them is Mover Tuning's age filter with **Use ATIME**: files go back to the array once they haven't been *accessed* for a while. Unraid mounts every pool with `noatime`, though, so access times never change on a read. Set `ENABLE_POOL_ATIME` to `yes` (Pool Access Times on the settings page) to fix that for the pools Unspin promotes into. Promoted files always get the promotion time as their access time, so they aren't demoted on Mover Tuning's next run.
 
 ---
 

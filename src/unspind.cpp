@@ -94,6 +94,7 @@ struct Config {
     bool                     rule3_enabled             = true;
     int                      rule3_min_reads           = 6;     // thumbnail filter: skip opens with 1..N-1 reads (0=disabled)
     bool                     pause_on_rsync            = true;  // pause event counting while any rsync process is running
+    bool                     enable_pool_atime         = false; // turn access times on for target pools (Mover Tuning ATIME)
     std::string              log_file                  = "/var/log/unspin.log";
     long                     log_max_size_mb           = 64;    // trim log once it exceeds this size
     long                     log_trim_size_mb          = 5;     // trim log down to this size
@@ -455,6 +456,7 @@ static void load_config() {
         {"RULE3_ENABLED",            "yes"},
         {"RULE3_MIN_READS",          "6"},
         {"PAUSE_ON_RSYNC",           "yes"},
+        {"ENABLE_POOL_ATIME",        "no"},
         {"EXCLUDE_PATTERNS",         "/nevercachethis,/orthis"},
         {"LOG_FILE",                 "/var/log/unspin.log"},
         {"LOG_MAX_SIZE_MB",          "64"},
@@ -504,6 +506,7 @@ static void load_config() {
     _cfg.rule3_enabled            = (get("RULE3_ENABLED")      != "no");
     _cfg.rule3_min_reads          = std::max(0, std::stoi(get("RULE3_MIN_READS")));
     _cfg.pause_on_rsync           = (get("PAUSE_ON_RSYNC")     != "no");
+    _cfg.enable_pool_atime        = (get("ENABLE_POOL_ATIME")  == "yes");
     _cfg.log_file                 = get("LOG_FILE");
     _cfg.log_max_size_mb          = std::stol(get("LOG_MAX_SIZE_MB"));
     _cfg.log_trim_size_mb         = std::stol(get("LOG_TRIM_SIZE_MB"));
@@ -572,6 +575,7 @@ static void log_config() {
              " opens / " + std::to_string(_cfg.large_long_window_hours) + " h, min reads filter: " +
              (_cfg.rule3_min_reads == 0 ? std::string("off") : std::to_string(_cfg.rule3_min_reads)));
     if (_cfg.dry_run) log_info("DRY RUN mode - no files will be moved");
+    log_info(std::string("Pool access times: ") + (_cfg.enable_pool_atime ? "enabled" : "disabled"));
     log_info(_cfg.mount_wait_timeout_mins > 0
              ? "Mount wait: up to " + std::to_string(_cfg.mount_wait_timeout_mins) +
                " min, retry every " + std::to_string(_cfg.mount_retry_interval_secs) + " s"
@@ -600,21 +604,32 @@ static void log_config() {
 
 static constexpr unsigned long ZFS_SUPER_MAGIC = 0x2fc12fc1;
 
-// Source (device / dataset name) of the mount that contains path, i.e. the
-// longest mountpoint in /proc/self/mounts that is a prefix of path.
-static std::string mount_source(const std::string& path) {
+struct MountEntry {
+    std::string src;     // device / dataset name
+    std::string mnt;
+    std::string fstype;
+};
+
+// The mount that contains path, i.e. the longest mountpoint in /proc/self/mounts
+// that is a prefix of path.
+static bool mount_entry(const std::string& path, MountEntry& out) {
     std::ifstream f("/proc/self/mounts");
-    std::string line, best_src;
-    size_t best_len = 0;
+    std::string line;
+    bool found = false;
     while (std::getline(f, line)) {
         std::istringstream ss(line);
-        std::string src, mnt;
-        if (!(ss >> src >> mnt)) continue;
-        bool under = path == mnt || mnt == "/" ||
-                     (path.compare(0, mnt.size(), mnt) == 0 && path[mnt.size()] == '/');
-        if (under && mnt.size() >= best_len) { best_len = mnt.size(); best_src = src; }
+        MountEntry e;
+        if (!(ss >> e.src >> e.mnt >> e.fstype)) continue;
+        bool under = path == e.mnt || e.mnt == "/" ||
+                     (path.compare(0, e.mnt.size(), e.mnt) == 0 && path[e.mnt.size()] == '/');
+        if (under && (!found || e.mnt.size() >= out.mnt.size())) { out = e; found = true; }
     }
-    return best_src;
+    return found;
+}
+
+static std::string mount_source(const std::string& path) {
+    MountEntry e;
+    return mount_entry(path, e) ? e.src : "";
 }
 
 // statvfs on a ZFS dataset only counts the dataset's own data (not child
@@ -796,8 +811,10 @@ static bool copy_file(const std::string& src, const std::string& dst) {
     if (chown(dst.c_str(), _nobody_uid, _nobody_gid) != 0)
         log_err("chown(" + dst + "): " + strerror(errno));
 
-    // Preserve original atime and mtime
-    struct timespec times[2] = { st.st_atim, st.st_mtim };
+    // Keep the original mtime. atime = now: the promotion is itself an access,
+    // and the array copy's atime is stale (Unraid mounts disks noatime), which
+    // would make Mover Tuning's ATIME filter demote the file on its next run.
+    struct timespec times[2] = { {0, UTIME_NOW}, st.st_mtim };
     utimensat(AT_FDCWD, dst.c_str(), times, 0);
 
     return true;
@@ -1351,6 +1368,233 @@ static void process_events(int fan_fd) {
 }
 
 // ---------------------------------------------------------------------------
+// Pool access times (ENABLE_POOL_ATIME, GH #9)
+// ---------------------------------------------------------------------------
+// Unraid mounts every pool noatime, so Mover Tuning's ATIME filter sees frozen
+// access times. With the setting on, the pools Unspin promotes into get access
+// times back: btrfs/xfs via a relatime remount (lost at every array start, so
+// the periodic check re-applies it), ZFS via the atime/relatime properties
+// (persist in the pool). Only Unspin's own changes are recorded, so switching
+// the setting off never touches a pool the user set up themselves.
+
+// btrfs/xfs pools remounted relatime by Unspin, one pool per line. tmpfs is
+// fine: the remount itself doesn't survive a reboot either.
+static const std::string ATIME_APPLIED_FILE = "/var/run/unspind.atime-applied";
+// ZFS properties changed by Unspin, tab-separated, on the flash because the
+// change persists across reboots:
+//   set     <pool> <dataset> <property> <original value> <original source>
+//   pending <pool> <mount id>      (revert at the next array start)
+static const std::string ATIME_ZFS_STATE    = "/boot/config/plugins/unspin/atime-zfs.state";
+// Created by the settings page when the setting is switched off with "now".
+static const std::string ATIME_REVERT_NOW   = "/var/run/unspind.atime-revert-now";
+
+static std::unordered_set<std::string> _atime_warned;          // pools warned about (reset on SIGHUP)
+static std::unordered_set<std::string> _atime_seen_unmounted;  // ZFS pools seen unmounted while a revert is pending
+
+static std::vector<std::string> read_lines(const std::string& path) {
+    std::vector<std::string> lines;
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line))
+        if (!line.empty()) lines.push_back(line);
+    return lines;
+}
+
+static void write_lines(const std::string& path, const std::vector<std::string>& lines) {
+    if (lines.empty()) { unlink(path.c_str()); return; }
+    std::ofstream f(path, std::ios::trunc);
+    for (const auto& l : lines) f << l << "\n";
+}
+
+static std::vector<std::string> split_tabs(const std::string& s) {
+    std::vector<std::string> out;
+    std::istringstream ss(s);
+    std::string field;
+    while (std::getline(ss, field, '\t')) out.push_back(field);
+    return out;
+}
+
+static bool run_quiet(const std::string& cmd) {
+    return system((cmd + " > /dev/null 2>&1").c_str()) == 0;
+}
+
+static void atime_warn(const std::string& pool, const std::string& msg) {
+    if (_atime_warned.insert(pool).second) log_warn(msg);
+}
+
+// Mount id (first field of /proc/self/mountinfo) of the mount at mnt. Changes
+// when the pool is remounted, i.e. at every array start.
+static std::string mount_id(const std::string& mnt) {
+    std::ifstream f("/proc/self/mountinfo");
+    std::string line;
+    while (std::getline(f, line)) {
+        std::istringstream ss(line);
+        std::string id, parent, devno, root, point;
+        if (ss >> id >> parent >> devno >> root >> point && point == mnt) return id;
+    }
+    return "";
+}
+
+static void enable_atime_remount(const std::string& pool, const std::string& mnt) {
+    struct statvfs sv;
+    if (statvfs(mnt.c_str(), &sv) != 0 || !(sv.f_flag & ST_NOATIME)) return;  // relatime/strictatime already
+    // "atime" is required: libmount keeps the existing noatime on a remount, so
+    // "remount,relatime" alone succeeds but changes nothing.
+    if (!run_quiet("mount -o remount,atime,relatime " + sh_squote(mnt)) ||
+        statvfs(mnt.c_str(), &sv) != 0 || (sv.f_flag & ST_NOATIME)) {
+        atime_warn(pool, "Could not remount " + mnt + " with relatime - access times stay off");
+        return;
+    }
+    auto applied = read_lines(ATIME_APPLIED_FILE);
+    if (std::find(applied.begin(), applied.end(), pool) == applied.end()) {
+        applied.push_back(pool);
+        write_lines(ATIME_APPLIED_FILE, applied);
+    }
+    log_info("Enabled access times on pool " + mnt + " (remounted relatime)");
+}
+
+struct ZfsProp { std::string ds, prop, value, source; };
+
+static bool zfs_atime_props(const std::string& root, std::vector<ZfsProp>& out) {
+    auto cmd = "zfs get -H -r -t filesystem -o name,property,value,source atime,relatime " +
+               sh_squote(root) + " 2>/dev/null";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return false;
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), p)) {
+        auto f = split_tabs(trim(buf));
+        if (f.size() == 4) out.push_back({f[0], f[1], f[2], f[3]});
+    }
+    return pclose(p) == 0;
+}
+
+static void enable_atime_zfs(const std::string& pool, const std::string& root) {
+    auto state = read_lines(ATIME_ZFS_STATE);
+    // One property per pass, then re-read: setting it on a parent switches
+    // children that inherit it too, so they don't get their own local value.
+    for (int pass = 0; pass < 256; ++pass) {
+        std::vector<ZfsProp> props;
+        if (!zfs_atime_props(root, props)) {
+            atime_warn(pool, "Could not read atime properties of ZFS dataset " + root);
+            return;
+        }
+        auto it = std::find_if(props.begin(), props.end(),
+                               [](const ZfsProp& z) { return z.value != "on"; });
+        if (it == props.end()) return;
+
+        // Record before changing, so a crash in between can't lose the original.
+        auto key = "set\t" + pool + "\t" + it->ds + "\t" + it->prop + "\t";
+        bool recorded = std::any_of(state.begin(), state.end(),
+                                    [&](const std::string& l) { return l.rfind(key, 0) == 0; });
+        if (!recorded) {
+            state.push_back(key + it->value + "\t" + it->source);
+            write_lines(ATIME_ZFS_STATE, state);
+        }
+        if (!run_quiet("zfs set " + it->prop + "=on " + sh_squote(it->ds))) {
+            if (!recorded) { state.pop_back(); write_lines(ATIME_ZFS_STATE, state); }
+            atime_warn(pool, "Could not set " + it->prop + "=on on ZFS dataset " + it->ds +
+                             " - access times stay off");
+            return;
+        }
+        log_info("Enabled access times on ZFS dataset " + it->ds + " (" + it->prop +
+                 "=on, was " + it->value + ")");
+    }
+}
+
+static void revert_atime_remounts() {
+    for (const auto& pool : read_lines(ATIME_APPLIED_FILE)) {
+        auto mnt = MNT_PREFIX + pool;
+        if (!is_mounted(mnt)) continue;
+        if (run_quiet("mount -o remount,noatime " + sh_squote(mnt)))
+            log_info("Turned access times off on pool " + mnt + " (remounted noatime)");
+        else
+            log_warn("Could not remount " + mnt + " with noatime");
+    }
+    unlink(ATIME_APPLIED_FILE.c_str());
+}
+
+// Restore the recorded ZFS properties of one pool (or all, if pool is empty),
+// newest change first.
+static void revert_atime_zfs(const std::string& pool) {
+    auto state = read_lines(ATIME_ZFS_STATE);
+    std::vector<std::string> keep;
+    for (auto it = state.rbegin(); it != state.rend(); ++it) {
+        auto f = split_tabs(*it);
+        if (f.size() < 3 || (!pool.empty() && f[1] != pool)) { keep.insert(keep.begin(), *it); continue; }
+        if (f[0] != "set" || f.size() != 6) continue;   // drops "pending" too
+        const auto& ds = f[2]; const auto& prop = f[3]; const auto& val = f[4]; const auto& src = f[5];
+        auto cmd = src == "local" ? "zfs set " + prop + "=" + sh_squote(val) + " " + sh_squote(ds)
+                                  : "zfs inherit " + prop + " " + sh_squote(ds);
+        if (run_quiet(cmd))
+            log_info("Turned access times off on ZFS dataset " + ds + " (" + prop + " back to " +
+                     (src == "local" ? val : "inherited") + ")");
+        else
+            log_warn("Could not restore " + prop + " on ZFS dataset " + ds + ": " + cmd);
+    }
+    write_lines(ATIME_ZFS_STATE, keep);
+}
+
+// Called at startup, on SIGHUP and every SUBMOUNT_RESCAN_INTERVAL_SEC.
+static void check_pool_atime() {
+    if (_cfg.enable_pool_atime) {
+        unlink(ATIME_REVERT_NOW.c_str());
+        // Switched back on before a pending revert happened: keep the changes.
+        auto state = read_lines(ATIME_ZFS_STATE);
+        auto n = state.size();
+        state.erase(std::remove_if(state.begin(), state.end(),
+                                   [](const std::string& l) { return l.rfind("pending\t", 0) == 0; }),
+                    state.end());
+        if (state.size() != n) write_lines(ATIME_ZFS_STATE, state);
+
+        for (const auto& [pool, info] : _pools) {
+            auto mnt = MNT_PREFIX + pool;
+            MountEntry me;
+            if (!is_mounted(mnt) || !mount_entry(mnt, me) || me.mnt != mnt) continue;
+            if (me.fstype == "zfs") enable_atime_zfs(pool, me.src);
+            else                    enable_atime_remount(pool, mnt);
+        }
+        return;
+    }
+
+    if (access(ATIME_REVERT_NOW.c_str(), F_OK) == 0) {
+        revert_atime_remounts();
+        revert_atime_zfs("");
+        unlink(ATIME_REVERT_NOW.c_str());
+        return;
+    }
+
+    // Off, at the next array start: Unraid remounts btrfs/xfs pools noatime itself.
+    unlink(ATIME_APPLIED_FILE.c_str());
+
+    // ZFS keeps its properties, so revert once the pool has been remounted.
+    auto state = read_lines(ATIME_ZFS_STATE);
+    if (state.empty()) return;
+    std::unordered_map<std::string, std::string> pending;   // pool -> mount id
+    std::vector<std::string> pools;
+    for (const auto& l : state) {
+        auto f = split_tabs(l);
+        if (f.size() < 3) continue;
+        if (f[0] == "pending") pending[f[1]] = f[2];
+        else if (std::find(pools.begin(), pools.end(), f[1]) == pools.end()) pools.push_back(f[1]);
+    }
+    for (const auto& pool : pools) {
+        auto mnt = MNT_PREFIX + pool;
+        if (!is_mounted(mnt)) { _atime_seen_unmounted.insert(pool); continue; }
+        auto id = mount_id(mnt);
+        auto pit = pending.find(pool);
+        if (pit == pending.end()) {
+            state.push_back("pending\t" + pool + "\t" + id);
+            write_lines(ATIME_ZFS_STATE, state);
+            log_info("Access times on ZFS pool " + mnt + " will be turned off at the next array start");
+        } else if (pit->second != id || _atime_seen_unmounted.count(pool)) {
+            revert_atime_zfs(pool);
+            _atime_seen_unmounted.erase(pool);
+            state = read_lines(ATIME_ZFS_STATE);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -1402,6 +1646,7 @@ int main(int argc, char* argv[]) {
         log_err("fanotify init failed - unspind running as root?");
         return 1;
     }
+    check_pool_atime();
 
     _last_cleanup = time(nullptr);
 
@@ -1436,6 +1681,8 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             pfd.fd = fan_fd;
+            _atime_warned.clear();
+            check_pool_atime();
         }
 
         auto ret = poll(&pfd, 1, POLL_TIMEOUT_MS);
@@ -1447,19 +1694,23 @@ int main(int argc, char* argv[]) {
         if (ret == 0) {
             // Poll timeout - refresh transfer state so "finished" is logged promptly
             transfers_active();
+        } else if (pfd.revents & POLLIN) {
+            process_events(fan_fd);
+        }
 
+        // Checked on every pass, not only on poll timeouts: a busy server may
+        // never go POLL_TIMEOUT_MS without a file event.
+        time_t now = time(nullptr);
+        if (now - _last_submount_scan >= SUBMOUNT_RESCAN_INTERVAL_SEC) {
+            _last_submount_scan = now;
             // Pick up dataset mounts created on the fly (e.g. a ZFS share used for
             // the first time) without waiting for a restart or SIGHUP (GH #8).
-            time_t now = time(nullptr);
-            if (now - _last_submount_scan >= SUBMOUNT_RESCAN_INTERVAL_SEC) {
-                _last_submount_scan = now;
-                for (const auto& path : _cfg.scan_paths)
-                    if (is_mounted(path)) mark_submounts(fan_fd, path, _marked_submounts);
-            }
-            continue;
+            for (const auto& path : _cfg.scan_paths)
+                if (is_mounted(path)) mark_submounts(fan_fd, path, _marked_submounts);
+            // Every array start remounts the pools noatime (and is how a
+            // pending ZFS revert gets noticed).
+            check_pool_atime();
         }
-        if (pfd.revents & POLLIN)
-            process_events(fan_fd);
     }
 
     close(fan_fd);

@@ -110,10 +110,24 @@ if ($action === 'save') {
     $k = 'RULE3_ENABLED';             $cfg[$k] = $yn($k);
     $k = 'RULE3_MIN_READS';           $cfg[$k] = $pint($k, 0);
     $k = 'PAUSE_ON_RSYNC';            $cfg[$k] = $yn($k);
+    $k = 'ENABLE_POOL_ATIME';         $cfg[$k] = $yn($k);
     $k = 'MOUNT_WAIT_TIMEOUT_MINS';   $cfg[$k] = $pint($k, 0);
     $k = 'MOUNT_RETRY_INTERVAL_SECS'; $cfg[$k] = $pint($k, 1);
     save_cfg($cfg_file, $cfg);
     $saved_cfg = $cfg;
+
+    // Pool access times switched off: the settings page asked whether to undo
+    // Unspin's changes now or at the next array start. The daemon reads this
+    // marker on the SIGHUP reload below.
+    $atime_msg = '';
+    if ($p('ENABLE_POOL_ATIME') === 'yes' && $cfg['ENABLE_POOL_ATIME'] === 'no') {
+        if (($_POST['ATIME_OFF'] ?? '') === 'now') {
+            touch('/var/run/unspind.atime-revert-now');
+            $atime_msg = ' Access times are being turned off on the pools Unspin enabled them on.';
+        } else {
+            $atime_msg = ' Access times will be turned off on the pools Unspin enabled them on at the next array start.';
+        }
+    }
 
     if (file_exists($rc_script)) {
         if ($cfg['SERVICE'] === 'enabled') {
@@ -127,7 +141,7 @@ if ($action === 'save') {
             exec("$rc_script stop < /dev/null > /dev/null 2>&1 &");
         }
     }
-    $msg = 'Settings saved.';
+    $msg = 'Settings saved.' . $atime_msg;
 
 } elseif ($action === 'start') {
     if (file_exists($rc_script)) exec("$rc_script start < /dev/null > /dev/null 2>&1 &");

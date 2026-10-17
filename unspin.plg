@@ -22,6 +22,9 @@
 ### next
 - fix: ZFS pools were measured as nearly empty when shares are child datasets, so Pool Fill Limits never applied and the settings page showed 0% used. ZFS pool usage now comes from `zfs get used,available` (GH #11)
 - non-ZFS pool fill is now calculated like `df` (reserved blocks excluded)
+- promoted files now get the promotion time as their access time (modification time is still kept), so Mover Tuning's ATIME filter no longer demotes them on its next run (GH #9)
+- new setting Pool Access Times (ENABLE_POOL_ATIME, default off): turns access times on for the pools Unspin promotes into, for Mover Tuning's Use ATIME filter. Btrfs/XFS pools are remounted relatime and re-applied after every array start; ZFS datasets get atime=on relatime=on (untested). Switching it off undoes only Unspin's own changes, now or at the next array start (GH #9)
+- the once-a-minute checks (new ZFS share mounts on array disks, pool access times) now also run on busy servers; before, they only ran after 5 seconds without any file activity
 
 ### 2026.09.20.50926
 - install: pluginURL now points at the latest GitHub release asset instead of a copy on main, so update checks always match the exact build that was hashed and uploaded

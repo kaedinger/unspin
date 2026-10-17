@@ -42,6 +42,11 @@ RULE3_MIN_READS="6"
 # Mover always pauses Unspin regardless of this setting.
 PAUSE_ON_RSYNC="yes"
 
+# Turn access times on for the pools Unspin promotes into (yes/no), for Mover
+# Tuning's "Use ATIME" filter. Unraid mounts pools noatime; btrfs/xfs pools are
+# remounted relatime, ZFS datasets get atime=on relatime=on.
+ENABLE_POOL_ATIME="no"
+
 # Comma-separated partial path patterns to exclude from tiering
 EXCLUDE_PATTERNS="/qbittorrent"
 
