@@ -128,7 +128,7 @@
 -->
 <FILE Name="/boot/config/plugins/&name;/&name;.txz">
 <URL>https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz</URL>
-<SHA256>8a9c5f7fa1d181c5369846f556424dda572b81bb21953556ba8060fd05d4b078</SHA256>
+<SHA256>7cf9d102c6fac566205065dee479e2b6e48d5f9f5d029e8ecd6eb14b6a39facb</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">
