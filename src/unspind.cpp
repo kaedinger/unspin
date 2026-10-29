@@ -14,6 +14,7 @@
 #include <deque>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -820,7 +821,99 @@ static bool copy_file(const std::string& src, const std::string& dst) {
     return true;
 }
 
-static bool promote_file(const std::string& src, int64_t size,
+// ---------------------------------------------------------------------------
+// Promotion statistics
+// ---------------------------------------------------------------------------
+
+// One line per day and pool with promotions: "YYYY-MM-DD\tpool\tfiles\tbytes".
+// The settings page reads STATS_LIVE (RAM), written at most once per
+// PERIODIC_CHECK_INTERVAL_SEC. STATS_FILE on the flash survives reboots; to
+// spare the flash drive it's written at most once per STATS_FLASH_INTERVAL_SEC
+// and on exit (Unraid sends SIGTERM before unmounting the flash at shutdown).
+static const std::string STATS_LIVE  = "/var/run/unspind.stats";
+static const std::string STATS_FILE  = "/boot/config/plugins/unspin/stats";
+// Created by the settings page's reset button (which also deletes both files):
+// drop the in-memory statistics before the next write would bring them back.
+static const std::string STATS_RESET = "/var/run/unspind.stats-reset";
+static constexpr int     STATS_FLASH_INTERVAL_SEC = 60 * 60;
+
+struct DayStats { int64_t files = 0; int64_t bytes = 0; };
+static std::map<std::pair<std::string, std::string>, DayStats> _stats;   // (date, pool) -> totals
+static bool   _stats_live_dirty  = false;
+static bool   _stats_flash_dirty = false;
+static time_t _stats_flash_last  = 0;
+
+static void check_stats_reset() {
+    if (unlink(STATS_RESET.c_str()) != 0) return;
+    _stats.clear();
+    _stats_live_dirty = _stats_flash_dirty = false;
+    unlink(STATS_LIVE.c_str());
+    unlink(STATS_FILE.c_str());
+    log_info("Promotion statistics reset");
+}
+
+static void load_stats() {
+    check_stats_reset();
+    _stats_flash_last = time(nullptr);
+    // The RAM copy is never older than the flash one: it's only missing after
+    // a reboot, and newer when the daemon died without writing to the flash.
+    auto live = access(STATS_LIVE.c_str(), F_OK) == 0;
+    _stats_flash_dirty = live;
+    std::ifstream f(live ? STATS_LIVE : STATS_FILE);
+    std::string line;
+    while (std::getline(f, line)) {
+        std::istringstream ss(line);
+        std::string date, pool;
+        DayStats d;
+        if (ss >> date >> pool >> d.files >> d.bytes) _stats[{date, pool}] = d;
+    }
+}
+
+static void record_promotion(const std::string& pool, int64_t size) {
+    check_stats_reset();
+    auto now = time(nullptr);
+    struct tm tm_buf;
+    localtime_r(&now, &tm_buf);
+    char date[16];
+    strftime(date, sizeof(date), "%Y-%m-%d", &tm_buf);
+    auto& d = _stats[{date, pool}];
+    d.files++;
+    d.bytes += size;
+    _stats_live_dirty = _stats_flash_dirty = true;
+}
+
+static bool write_stats(const std::string& path) {
+    auto tmp = path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        for (const auto& [key, d] : _stats)
+            f << key.first << '\t' << key.second << '\t' << d.files << '\t' << d.bytes << '\n';
+        f.close();
+        if (!f) {
+            log_err("Cannot write " + tmp);
+            return false;
+        }
+    }
+    if (rename(tmp.c_str(), path.c_str()) != 0) {
+        log_err("rename(" + tmp + "): " + strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+// force: write the flash copy now (on exit) instead of waiting for the interval.
+static void flush_stats(bool force = false) {
+    check_stats_reset();
+    if (_stats_live_dirty && write_stats(STATS_LIVE))
+        _stats_live_dirty = false;
+    auto now = time(nullptr);
+    if (_stats_flash_dirty && (force || now - _stats_flash_last >= STATS_FLASH_INTERVAL_SEC)) {
+        _stats_flash_last = now;
+        if (write_stats(STATS_FILE)) _stats_flash_dirty = false;
+    }
+}
+
+static bool promote_file(const std::string& src, int64_t size, const std::string& pool,
                          const PromoteDecision& dec, int total_reads) {
     auto dst = resolve_destination(src);
     auto tag = access_tag(total_reads, true);
@@ -842,6 +935,7 @@ static bool promote_file(const std::string& src, int64_t size,
         return false;
     }
 
+    record_promotion(pool, size);
     return true;
 }
 
@@ -951,7 +1045,7 @@ static void try_promote(const std::string& path, int64_t size, const std::string
         else             { log_debug(msg); }
         return;
     }
-    if (promote_file(path, size, dec, rec.total_reads))
+    if (promote_file(path, size, pool_name, dec, rec.total_reads))
         rec.promoted = true;
 }
 
@@ -1648,6 +1742,7 @@ int main(int argc, char* argv[]) {
     log_info("=== unspind starting ===");
     log_config();
     init_nobody();
+    load_stats();
 
     int fan_fd = init_fanotify();
     if (fan_fd < 0) {
@@ -1719,9 +1814,11 @@ int main(int argc, char* argv[]) {
             // Every array start remounts the pools noatime (and is how a
             // pending ZFS revert gets noticed).
             check_pool_atime();
+            flush_stats();
         }
     }
 
+    flush_stats(true);
     close(fan_fd);
     log_info("unspind stopped.");
     return 0;

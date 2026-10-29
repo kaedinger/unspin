@@ -15,14 +15,6 @@ function fmt_size($v) {
     return preg_replace('/(\d)([KMGT]B?)$/i', '$1 $2', trim($v));
 }
 
-function fmt_bytes($n) {
-    $u = ['B','KB','MB','GB','TB','PB'];
-    $i = 0;
-    $v = (float)$n;
-    while ($v >= 1024 && $i < count($u) - 1) { $v /= 1024; $i++; }
-    return ($v >= 100 ? round($v) : round($v, 1)) . ' ' . $u[$i];
-}
-
 // [total, used] bytes for a pool mount, or null. On ZFS, disk_total_space() and
 // disk_free_space() only count the top-level dataset's own data (not child
 // datasets or snapshots), so ask zfs: "used" of the dataset includes its children.
@@ -257,6 +249,33 @@ dt.hf-share-name {
 @media (max-width: 700px), (orientation: portrait) {
   .recent-disks-grid { grid-template-columns: 1fr; }
 }
+
+/* Summary line of a foldable section (promotion statistics, detected shares) */
+.hf-fold-line {
+  width: 400px;
+  max-width: 100%;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Promotion statistics */
+.hf-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  justify-content: space-between;
+  width: 400px;
+  max-width: 100%;
+  column-gap: 16px;
+  row-gap: 2px;
+  margin: 8px 0 4px;
+}
+.hf-stats-grid > span { white-space: nowrap; }
+.hf-stats-grid > span:nth-child(-n+4) { opacity: 0.7; }
+.hf-stats-sum { font-weight: bold; }
+.hf-stats-note { font-size: 0.85em; opacity: 0.7; margin-bottom: 6px; }
 </style>
 
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
@@ -271,6 +290,19 @@ dt.hf-share-name {
     <button type="button" id="hf-toggle-btn" onclick="hfDaemonToggle()">
       <?= $is_running ? 'Stop Daemon' : 'Start Daemon' ?>
     </button>
+  </dd>
+
+<?php $stats = promotion_stats(); ?>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Promoted to Cache</dt>
+  <dd>
+    <div class="hf-fold-line" onclick="hfFold('stats')" title="Files (size) - click for details per pool">
+      <span id="hf-fold-caret-stats">&#9656;</span> <span id="hf-stats-line"><?= htmlspecialchars($stats['summary']) ?></span>
+    </div>
+    <div class="hf-fold-stats" style="display:none;">
+      <div id="hf-stats-table"><?= $stats['detail'] ?></div>
+      <input type="button" value="Reset Statistics" onclick="hfResetStats()">
+    </div>
+    <div class="hf-help">Files Unspin moved to the cache pools: today, average per day and in total, summed over all pools. Click the line for the numbers per pool. Dry run promotions are not counted. The average counts every day since the first promotion, including days without any. Updated about once a minute.</div>
   </dd>
 </dl>
 
@@ -392,7 +424,10 @@ dt.hf-share-name {
   <dt class="hf-has-help" data-help-target="hf-shares-help" onclick="hfToggleHelp(this)">Detected Shares</dt>
   <dd>
     <?php if (!empty($shares)): ?>
-    <div class="hf-share-row hf-share-head">
+    <div class="hf-fold-line" onclick="hfFold('shares')">
+      <span id="hf-fold-caret-shares">&#9656;</span> <span id="hf-shares-summary"></span>
+    </div>
+    <div class="hf-share-row hf-share-head hf-fold-shares" style="display:none;">
       <span>Use Cache</span>
       <span>Pool</span>
       <span>Status</span>
@@ -422,8 +457,8 @@ dt.hf-share-name {
                 ? '<span style="color:#4ade80;">promotable</span>'
                 : '<span style="color:#facc15;">excluded</span>');
   ?>
-    <dt class="hf-share-name"><code><?= htmlspecialchars($sname) ?></code></dt>
-    <dd>
+    <dt class="hf-share-name hf-fold-shares" style="display:none;"><code><?= htmlspecialchars($sname) ?></code></dt>
+    <dd class="hf-fold-shares" style="display:none;">
       <div class="hf-share-row">
         <span><?= htmlspecialchars($uc) ?></span>
         <span><?= htmlspecialchars($pool) ?></span>
@@ -777,6 +812,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
       statusCell.innerHTML = cb.checked
         ? '<span style="color:#4ade80;">promotable</span>'
         : '<span style="color:#facc15;">excluded</span>';
+      updateSharesSummary();
     });
   });
 
@@ -842,7 +878,58 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
       HF_RECENT = r.recent;
       renderRecent(HF_RECENT.lists);
     }
+    if (r.stats) applyStats(r.stats);
   }
+
+  function applyStats(stats) {
+    document.getElementById('hf-stats-line').textContent = stats.summary;
+    document.getElementById('hf-stats-table').innerHTML  = stats.detail;
+  }
+
+  // Foldable sections: the summary line toggles every element with class
+  // hf-fold-<name>. The state is remembered per browser.
+  window.hfFold = function (name, open) {
+    var items = document.querySelectorAll('.hf-fold-' + name);
+    if (!items.length) return;
+    if (open === undefined) open = items[0].style.display === 'none';
+    items.forEach(function (el) { el.style.display = open ? '' : 'none'; });
+    document.getElementById('hf-fold-caret-' + name).innerHTML = open ? '&#9662;' : '&#9656;';
+    try { localStorage.setItem('unspin-fold-' + name, open ? '1' : '0'); } catch (e) {}
+  };
+
+  ['stats', 'shares'].forEach(function (name) {
+    var open = false;
+    try { open = localStorage.getItem('unspin-fold-' + name) === '1'; } catch (e) {}
+    if (open) hfFold(name, true);
+  });
+
+  function updateSharesSummary() {
+    var el = document.getElementById('hf-shares-summary');
+    if (!el) return;
+    var total    = document.querySelectorAll('dt.hf-share-name').length;
+    var cbs      = document.querySelectorAll('input.hf-share-cb');
+    var promoted = document.querySelectorAll('input.hf-share-cb:checked').length;
+    el.textContent = total + (total === 1 ? ' share: ' : ' shares: ') + promoted + ' promotable, ' +
+                     (cbs.length - promoted) + ' excluded, ' + (total - cbs.length) + ' not promotable';
+  }
+  updateSharesSummary();
+
+  window.hfResetStats = function () {
+    var text = 'Reset the promotion statistics for all pools? This cannot be undone.';
+    var reset = function () {
+      hfPost({ action: 'reset_stats' }, function (r) {
+        showMsg(r.message, r.ok);
+        if (r.stats) applyStats(r.stats);
+      });
+    };
+    if (typeof swal === 'function') {
+      swal({ title: 'Reset Statistics', text: text, type: 'warning', showCancelButton: true,
+             confirmButtonText: 'Reset', cancelButtonText: 'Cancel' },
+           function (ok) { if (ok) reset(); });
+    } else if (confirm(text)) {
+      reset();
+    }
+  };
 
   var fields = ['SERVICE','SCAN_PATHS',
                 'SMALL_FILE_THRESHOLD','SMALL_MIN_ACCESSES',

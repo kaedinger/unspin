@@ -19,6 +19,10 @@
 >
 
 <CHANGES>
+### next
+- feat: promotion statistics on the settings page - files and size moved to the cache pools today, average per day and in total. One summary line (summed over all pools) that folds out to a table per pool, with a reset button. Kept in RAM and saved to /boot/config/plugins/unspin/stats at most once an hour and when the daemon stops
+- feat: the Detected Shares list folds into one summary line with share counts; click it to show the shares. Both foldable sections remember their state per browser
+
 ### 2026.10.17.48740
 - fix: ZFS pools were measured as nearly empty when shares are child datasets, so Pool Fill Limits never applied and the settings page showed 0% used. ZFS pool usage now comes from `zfs get used,available` (GH #11)
 - non-ZFS pool fill is now calculated like `df` (reserved blocks excluded)

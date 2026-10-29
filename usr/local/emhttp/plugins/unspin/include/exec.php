@@ -155,6 +155,17 @@ if ($action === 'save') {
     file_put_contents($log_file, '');
     $msg = 'Log cleared.';
 
+} elseif ($action === 'reset_stats') {
+    // The daemon also holds the statistics in memory; the marker makes it drop
+    // them before its next write. Marker first, so a write in between can't
+    // bring the deleted file back for good.
+    touch('/var/run/unspind.stats-reset');
+    @unlink('/var/run/unspind.stats');
+    @unlink('/boot/config/plugins/unspin/stats');
+    echo json_encode(['ok' => true, 'message' => 'Statistics reset.',
+                      'running' => daemon_running($pid_file), 'stats' => promotion_stats()]);
+    exit;
+
 } elseif ($action === 'detect_disks') {
     $paths = trim(shell_exec(
         "awk '\$2 ~ /^\\/mnt\\/disk[0-9]+\$/ {print \$2}' /proc/mounts 2>/dev/null | sort -V | paste -sd,"
@@ -204,6 +215,7 @@ if ($action === 'save') {
         'pause_locks' => $pause_locks,
         'log'     => $log_lines,
         'recent'  => $recent,
+        'stats'   => promotion_stats(),
     ]);
     exit;
 
