@@ -276,6 +276,11 @@ dt.hf-share-name {
 .hf-stats-grid > span:nth-child(-n+4) { opacity: 0.7; }
 .hf-stats-sum { font-weight: bold; }
 .hf-stats-note { font-size: 0.85em; opacity: 0.7; margin-bottom: 6px; }
+
+/* Pool Fill Limits row, kept within the settings column */
+.hf-pool-row { width: 400px; max-width: 100%; margin-bottom: 4px; }
+.hf-pool-mnt { flex: 0 0 9em; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hf-pool-size { margin-left: auto; opacity: 0.7; white-space: nowrap; }
 </style>
 
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
@@ -499,14 +504,14 @@ dt.hf-share-name {
           $size_str = fmt_bytes($total) . ', ' . $pct . '% used';
       }
   ?>
-    <div class="hf-row" style="margin-bottom:4px;">
-      <span style="min-width:12em;font-family:monospace;"><?= htmlspecialchars($mnt) ?></span>
+    <div class="hf-row hf-pool-row">
+      <span class="hf-pool-mnt" title="<?= htmlspecialchars($mnt) ?>"><?= htmlspecialchars($mnt) ?></span>
       <input type="number" id="hf_<?= htmlspecialchars($key) ?>" name="<?= htmlspecialchars($key) ?>"
              min="10" max="99" value="<?= $val ?>" style="width:5em"
              data-hf-pool="1">
       <span>%</span>
       <span class="hf-reset" onclick="document.getElementById('hf_<?= htmlspecialchars($key) ?>').value='80';document.getElementById('hf_<?= htmlspecialchars($key) ?>').dispatchEvent(new Event('input',{bubbles:true}));" title="Reset to default (80)">&#x21ba;</span>
-      <?php if ($size_str): ?><span style="opacity:0.7;margin-left:1em;"><?= htmlspecialchars($size_str) ?></span><?php endif; ?>
+      <?php if ($size_str): ?><span class="hf-pool-size"><?= htmlspecialchars($size_str) ?></span><?php endif; ?>
     </div>
   <?php endforeach; endif; ?>
     <div class="hf-help">Stop promoting to a pool once its fill exceeds this percentage. One value per detected pool. Default <strong>80%</strong>.</div>
@@ -910,7 +915,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     var cbs      = document.querySelectorAll('input.hf-share-cb');
     var promoted = document.querySelectorAll('input.hf-share-cb:checked').length;
     el.textContent = total + (total === 1 ? ' share: ' : ' shares: ') + promoted + ' promotable, ' +
-                     (cbs.length - promoted) + ' excluded, ' + (total - cbs.length) + ' not promotable';
+                     (cbs.length - promoted) + ' excluded, ' + (total - cbs.length) + ' untouched';
   }
   updateSharesSummary();
 
