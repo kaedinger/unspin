@@ -8,6 +8,7 @@
 DAEMON=/usr/local/sbin/unspind
 PID_FILE=/var/run/unspind.pid
 PAUSE_DIR=/var/run/unspind.pause.d
+PAUSE_STATE=/var/run/unspind.pause-reasons   # written by unspind: Mover, rsync, signal
 LOG_FILE=/var/log/unspin.log
 
 CFG_FILE=/boot/config/plugins/unspin/unspin.cfg
@@ -41,7 +42,7 @@ unspin_start() {
         echo "Error: $DAEMON not found or not executable."
         return 1
     fi
-    rm -rf "$PAUSE_DIR"
+    rm -rf "$PAUSE_DIR" "$PAUSE_STATE"
     echo "Starting unspind..."
     "$DAEMON" > /dev/null 2>&1 &
     echo $! > "$PID_FILE"
@@ -68,7 +69,7 @@ unspin_stop() {
         pkill -9 -fx "$DAEMON" 2>/dev/null
         was_running=1
     fi
-    rm -f "$PID_FILE"
+    rm -f "$PID_FILE" "$PAUSE_STATE"
     rm -rf "$PAUSE_DIR"
     [ "$was_running" -eq 1 ] && echo "unspind stopped." || echo "unspind is not running."
 }
@@ -76,6 +77,13 @@ unspin_stop() {
 unspin_status() {
     if is_running; then
         echo "unspind is running (PID $(cat "$PID_FILE"))."
+        local r
+        while read -r r; do
+            case "$r" in
+                signal) echo "Paused by signal (SIGUSR1/SIGRTMIN) - SIGUSR2 resumes." ;;
+                ?*)     echo "Paused while $r is running." ;;
+            esac
+        done < <(cat "$PAUSE_STATE" 2>/dev/null)
         local n
         n=$(pause_count)
         if [ "$n" -gt 0 ]; then

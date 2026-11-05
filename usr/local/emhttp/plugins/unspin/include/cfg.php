@@ -76,6 +76,19 @@ function promotion_stats() {
             'detail'  => $detail];
 }
 
+// Why the daemon is paused, for the status line: what it reports itself in
+// /var/run/unspind.pause-reasons (a running Mover or rsync, a pause by signal),
+// then the names of the pause locks in /var/run/unspind.pause.d.
+function pause_reasons() {
+    $labels  = ['Mover' => 'Mover running', 'rsync' => 'rsync running', 'signal' => 'signal'];
+    $reasons = [];
+    foreach (@file('/var/run/unspind.pause-reasons', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $r)
+        $reasons[] = $labels[$r] ?? $r;
+    foreach (@scandir('/var/run/unspind.pause.d') ?: [] as $f)
+        if ($f !== '.' && $f !== '..') $reasons[] = $f;
+    return $reasons;
+}
+
 function daemon_running($pid_file) {
     if (!file_exists($pid_file)) return false;
     $pid = (int)trim(file_get_contents($pid_file));

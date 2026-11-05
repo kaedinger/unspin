@@ -60,13 +60,7 @@ if (file_exists($plg_file)) {
 }
 
 $is_running = daemon_running($pid_file);
-$pause_dir  = '/var/run/unspind.pause.d';
-$pause_locks = [];
-if (is_dir($pause_dir)) {
-    foreach (scandir($pause_dir) as $f) {
-        if ($f !== '.' && $f !== '..') $pause_locks[] = $f;
-    }
-}
+$pause_locks = pause_reasons();
 $is_paused = count($pause_locks) > 0;
 $pause_label = $is_paused ? ' (Paused: ' . htmlspecialchars(implode(', ', $pause_locks)) . ')' : '';
 

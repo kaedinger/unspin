@@ -150,7 +150,7 @@ static std::unordered_map<std::string, PoolInfo>     _pools;   // pool name  -> 
 static time_t      _last_cleanup     = 0;
 static time_t      _last_log_size_check = 0;
 static std::unordered_map<std::string, std::string> _last_pool_full_msg; // per-pool suppression
-static bool        _transfers_cached  = false;
+static std::string _transfer_cached;          // "Mover", "rsync" or "" (none running)
 static time_t      _transfers_checked = 0;
 static bool        _pause_dir_cached  = false;
 static time_t      _pause_dir_checked = 0;
@@ -666,13 +666,58 @@ static double disk_fill_percent(const std::string& path) {
     return total > 0 ? 100.0 * used / total : 100.0;
 }
 
+// A process's command line with the NUL separators turned into spaces ("" if gone).
+static std::string proc_cmdline(const std::string& pid) {
+    std::ifstream f("/proc/" + pid + "/cmdline", std::ios::binary);
+    std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::replace(s.begin(), s.end(), '\0', ' ');
+    return s;
+}
+
+// True if a process's name or the first word of its command line (basename) is
+// `name`. The command line matters: Mover Tuning (2026.10.30+) re-runs its
+// age_mover as `exec -a mover /bin/bash ...`, so its process name is "bash" and
+// only argv[0] says "mover".
+static bool process_running(const std::string& name) {
+    DIR* d = opendir("/proc");
+    if (!d) return false;
+    auto found = false;
+    struct dirent* ent;
+    while (!found && (ent = readdir(d)) != nullptr) {
+        if (ent->d_name[0] < '0' || ent->d_name[0] > '9') continue;
+        std::string pid = ent->d_name, comm;
+        std::ifstream c("/proc/" + pid + "/comm");
+        std::getline(c, comm);
+        if (comm == name) { found = true; break; }
+        auto cmd  = proc_cmdline(pid);
+        auto arg0 = cmd.substr(0, cmd.find(' '));
+        auto base = arg0.substr(arg0.rfind('/') + 1);  // npos + 1 = 0: no slash
+        found = (base == name);
+    }
+    closedir(d);
+    return found;
+}
+
+// The mover: /var/run/mover.pid (written by Unraid's mover and by Mover Tuning)
+// pointing to a live process with "mover" in its command line - the check guards
+// against a stale pid file whose PID got reused - or else a process called mover.
+static bool mover_running() {
+    std::ifstream f("/var/run/mover.pid");
+    long pid = 0;
+    if (f >> pid && pid > 0 &&
+        proc_cmdline(std::to_string(pid)).find("mover") != std::string::npos)
+        return true;
+    return process_running("mover");
+}
+
 // Live check - mover always counted, rsync only if PAUSE_ON_RSYNC is set.
-static bool transfers_running() {
-    if (system("pgrep -x mover > /dev/null 2>&1") == 0) 
-        return true;
-    if (_cfg.pause_on_rsync && system("pgrep -x rsync > /dev/null 2>&1") == 0) 
-        return true;
-    return false;
+// Returns what's running ("Mover" wins over "rsync"), "" for nothing.
+static std::string transfers_running() {
+    if (mover_running())
+        return "Mover";
+    if (_cfg.pause_on_rsync && process_running("rsync"))
+        return "rsync";
+    return "";
 }
 
 // Cached transfers check - refreshes at most every MOVER_CACHE_SEC seconds.
@@ -680,16 +725,42 @@ static bool transfers_running() {
 static bool transfers_active() {
     auto now = time(nullptr);
     if (now - _transfers_checked < MOVER_CACHE_SEC)
-        return _transfers_cached;
+        return !_transfer_cached.empty();
     _transfers_checked = now;
 
-    auto prev = _transfers_cached;
-    _transfers_cached = transfers_running();
-    if (_transfers_cached && !prev)
-        log_info("Mover or rsync started - pausing monitoring");
-    else if (!_transfers_cached && prev)
-        log_info("Mover or rsync finished - resuming monitoring");
-    return _transfers_cached;
+    auto prev = _transfer_cached;
+    _transfer_cached = transfers_running();
+    if (_transfer_cached != prev) {
+        if (prev.empty())
+            log_info(_transfer_cached + " started - pausing monitoring");
+        else if (_transfer_cached.empty())
+            log_info(prev + " finished - resuming monitoring");
+        else
+            log_info(prev + " finished, " + _transfer_cached + " running - monitoring stays paused");
+    }
+    return !_transfer_cached.empty();
+}
+
+// Pause reasons only the daemon knows (a running Mover or rsync, a pause by
+// signal), one per line, for the settings page and rc.unspin status - pause
+// locks they read from PAUSE_DIR themselves. Rewritten only when the reasons
+// change; removed when there are none and on exit.
+static const std::string PAUSE_STATE = "/var/run/unspind.pause-reasons";
+static void write_pause_state() {
+    static std::string last;
+    std::string s;
+    if (transfers_active()) s += _transfer_cached + "\n";
+    if (_paused)            s += "signal\n";
+    if (s == last) return;
+    last = s;
+    if (s.empty()) { unlink(PAUSE_STATE.c_str()); return; }
+    auto tmp = PAUSE_STATE + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        f << s;
+    }
+    chmod(tmp.c_str(), 0644);
+    rename(tmp.c_str(), PAUSE_STATE.c_str());
 }
 
 // True if any named pause lock exists in PAUSE_DIR. rc.unspin pause/unpause just
@@ -1042,8 +1113,8 @@ static PromoteDecision should_promote(const AccessRecord& rec, int64_t size) {
 static void try_promote(const std::string& path, int64_t size, const std::string& sname,
                          AccessRecord& rec, const PromoteDecision& dec) {
     if (rec.promoted) return;
-    if (transfers_running()) {
-        log_info("[" + dec.rule + "] Mover or rsync active, deferring: " + path);
+    if (auto running = transfers_running(); !running.empty()) {
+        log_info("[" + dec.rule + "] " + running + " active, deferring: " + path);
         return;
     }
 
@@ -1779,6 +1850,7 @@ int main(int argc, char* argv[]) {
             was_paused = paused_now;
             log_info(paused_now ? "--- Paused ---" : "--- Resumed ---");
         }
+        write_pause_state();
 
         // Runs on its own schedule (not just when something gets logged), so
         // the log still gets trimmed while paused and otherwise quiet.
@@ -1835,6 +1907,7 @@ int main(int argc, char* argv[]) {
     }
 
     flush_stats(true);
+    unlink(PAUSE_STATE.c_str());
     close(fan_fd);
     log_info("unspind stopped.");
     return 0;

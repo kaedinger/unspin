@@ -185,13 +185,7 @@ if ($action === 'save') {
     $log_tail_n   = (($poll_cfg['LOG_LEVEL'] ?? '') === 'debug') ? 1000 : 200;
     $exclude_skip = ($_POST['exclude_skip'] ?? '') === '1';
     $log_lines    = log_tail_lines($log_file, $log_tail_n, $exclude_skip ? '[skip share]' : null);
-    $pause_dir = '/var/run/unspind.pause.d';
-    $pause_locks = [];
-    if (is_dir($pause_dir)) {
-        foreach (scandir($pause_dir) as $f) {
-            if ($f !== '.' && $f !== '..') $pause_locks[] = $f;
-        }
-    }
+    $pause_locks = pause_reasons();
 
     $recent = null;
     if (($poll_cfg['LOG_LEVEL'] ?? '') === 'debug') {
