@@ -909,6 +909,7 @@ static bool write_stats(const std::string& path) {
             return false;
         }
     }
+    chmod(tmp.c_str(), 0644);  // umask(0) in main() would leave it world-writable
     if (rename(tmp.c_str(), path.c_str()) != 0) {
         log_err("rename(" + tmp + "): " + strerror(errno));
         return false;
