@@ -896,10 +896,18 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     line.textContent = open ? HF_STATS.open : HF_STATS.summary;
     line.style.fontSize = '';
     line.removeAttribute('title');
-    for (var pct = 95; pct >= 75 && box.scrollWidth > box.clientWidth; pct -= 5) {
+    // Measures the text itself, with a 1px margin: scrollWidth is rounded, so an
+    // overflow under 1px passed as fitting while the ellipsis still hid the end.
+    // The clipping is off while measuring, so the ellipsis can't shorten the text.
+    box.style.overflow = 'visible';
+    var tooWide = function () {
+      return line.getBoundingClientRect().right > box.getBoundingClientRect().right - 1;
+    };
+    for (var pct = 95; pct >= 75 && tooWide(); pct -= 5) {
       line.style.fontSize = pct + '%';
     }
-    if (box.scrollWidth > box.clientWidth) line.title = line.textContent;
+    if (tooWide()) line.title = line.textContent;
+    box.style.overflow = '';
   }
 
   // Foldable sections: the summary line toggles every element with class
