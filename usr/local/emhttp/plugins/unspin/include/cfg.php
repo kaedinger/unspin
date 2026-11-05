@@ -27,7 +27,8 @@ function fmt_bytes($n) {
 
 // Promotion statistics from the daemon's stats file (one "date\tpool\tfiles\tbytes"
 // line per day and pool with promotions) - the current copy in RAM, or the one on
-// the flash (written hourly) after a reboot: a one-line summary (plain text) and a
+// the flash (written hourly) after a reboot: a one-line summary (plain text) shown
+// while the section is folded, the header text shown while it's open, and a
 // per-pool table (HTML) with an "All pools" sum row when there's more than one
 // pool. Averages count every day since the first promotion on any pool, days
 // without promotions included, so the per-pool averages add up to the sum.
@@ -47,17 +48,17 @@ function promotion_stats() {
         $p[3] += (float)$bytes;
         $pools[$pool] = $p;
     }
-    if (!$pools) return ['summary' => 'No promotions yet', 'detail' => ''];
+    if (!$pools) return ['summary' => 'No promotions yet', 'open' => 'No promotions yet', 'detail' => ''];
     ksort($pools);
 
     $sum = [0, 0, 0, 0];
     foreach ($pools as $p) foreach ($p as $i => $v) $sum[$i] += $v;
 
     $days  = max(1, (int)round((strtotime($today) - strtotime($since)) / 86400) + 1);
-    $cell  = fn($files, $bytes) => $files . ' (' . fmt_bytes($bytes) . ')';
+    $cell  = fn($files, $bytes, $dec = 0) => number_format($files, $dec) . ' (' . fmt_bytes($bytes) . ')';
     $cells = function ($p) use ($cell, $days) {
         $avg = $p[2] / $days;
-        return [$cell($p[0], $p[1]), $cell(round($avg, $avg < 10 ? 1 : 0), $p[3] / $days), $cell($p[2], $p[3])];
+        return [$cell($p[0], $p[1]), $cell($avg, $p[3] / $days, $avg < 10 ? 1 : 0), $cell($p[2], $p[3])];
     };
     $row = function ($name, $p, $cls = '') use ($cells) {
         $html = "<span class=\"$cls\">" . htmlspecialchars($name) . '</span>';
@@ -69,8 +70,10 @@ function promotion_stats() {
     $detail = '<div class="hf-stats-grid"><span></span><span>Today</span><span>Avg/day</span><span>Total</span>';
     foreach ($pools as $name => $p) $detail .= $row($name, $p);
     if (count($pools) > 1) $detail .= $row('All pools', $sum, 'hf-stats-sum');
-    $detail .= '</div><div class="hf-stats-note">Averaged over ' . $days . ($days == 1 ? ' day.' : ' days.') . '</div>';
-    return ['summary' => "Today: $t · Avg/day: $a · Total: $s", 'detail' => $detail];
+    $detail .= '</div>';
+    return ['summary' => "Today $t · Avg $a · Total $s",
+            'open'    => 'Per pool, averaged over ' . number_format($days) . ($days == 1 ? ' day' : ' days'),
+            'detail'  => $detail];
 }
 
 function daemon_running($pid_file) {

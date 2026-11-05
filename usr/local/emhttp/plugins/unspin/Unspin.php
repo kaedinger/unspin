@@ -275,7 +275,6 @@ dt.hf-share-name {
 .hf-stats-grid > span { white-space: nowrap; }
 .hf-stats-grid > span:nth-child(-n+4) { opacity: 0.7; }
 .hf-stats-sum { font-weight: bold; }
-.hf-stats-note { font-size: 0.85em; opacity: 0.7; margin-bottom: 6px; }
 
 /* Pool Fill Limits row, kept within the settings column */
 .hf-pool-row { width: 400px; max-width: 100%; margin-bottom: 4px; }
@@ -887,8 +886,26 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   }
 
   function applyStats(stats) {
-    document.getElementById('hf-stats-line').textContent = stats.summary;
-    document.getElementById('hf-stats-table').innerHTML  = stats.detail;
+    HF_STATS = stats;
+    document.getElementById('hf-stats-table').innerHTML = stats.detail;
+    renderStatsLine();
+  }
+
+  // Statistics header: the summary while folded, the per-pool note while open.
+  // A summary too wide for the column is shrunk in steps down to 75%; past
+  // that it's cut off with an ellipsis and shown in full as a tooltip.
+  var HF_STATS = <?= json_encode($stats) ?>;
+  function renderStatsLine() {
+    var line = document.getElementById('hf-stats-line');
+    var box  = line.parentNode;
+    var open = document.querySelector('.hf-fold-stats').style.display !== 'none';
+    line.textContent = open ? HF_STATS.open : HF_STATS.summary;
+    line.style.fontSize = '';
+    line.removeAttribute('title');
+    for (var pct = 95; pct >= 75 && box.scrollWidth > box.clientWidth; pct -= 5) {
+      line.style.fontSize = pct + '%';
+    }
+    if (box.scrollWidth > box.clientWidth) line.title = line.textContent;
   }
 
   // Foldable sections: the summary line toggles every element with class
@@ -899,6 +916,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     if (open === undefined) open = items[0].style.display === 'none';
     items.forEach(function (el) { el.style.display = open ? '' : 'none'; });
     document.getElementById('hf-fold-caret-' + name).innerHTML = open ? '&#9662;' : '&#9656;';
+    if (name === 'stats') renderStatsLine();
     try { localStorage.setItem('unspin-fold-' + name, open ? '1' : '0'); } catch (e) {}
   };
 
@@ -1074,10 +1092,11 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   }, 10000);
 
   fitRecentPaths();
+  renderStatsLine();
   var resizeTimer;
   window.addEventListener('resize', function () {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(fitRecentPaths, 150);
+    resizeTimer = setTimeout(function () { fitRecentPaths(); renderStatsLine(); }, 150);
   });
 }());
 </script>
