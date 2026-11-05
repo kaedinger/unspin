@@ -146,6 +146,7 @@ Unspin promotes files because they are read, so the natural way to demote them i
 /etc/rc.d/rc.unspin restart
 /etc/rc.d/rc.unspin status
 /etc/rc.d/rc.unspin pause <name>    # add a pause lock (name required)
+/etc/rc.d/rc.unspin pause <name> --ttl 15m   # pause lock that expires unless refreshed
 /etc/rc.d/rc.unspin unpause <name>  # release a pause lock
 /etc/rc.d/rc.unspin toggle [name]   # if paused: clear all locks; if running: pause with <name>
 ```
@@ -171,6 +172,23 @@ ssh root@nas /etc/rc.d/rc.unspin unpause borgbackup
 ```
 
 Because locks stack, multiple backup tools can pause independently without interfering with each other.
+
+### Pause locks that expire
+
+A lock normally stays until it's released, so if the job that set it dies (killed, crashed, or its VM stopped mid-run), Unspin stays paused until you run `unpause` or reboot. To avoid that, give the lock a time to live and refresh it while the job runs:
+
+```bash
+ssh root@nas /etc/rc.d/rc.unspin pause mybackup --ttl 15m
+# ... during the job, every 5 minutes:
+ssh root@nas /etc/rc.d/rc.unspin pause mybackup --ttl 15m
+# ... at the end:
+ssh root@nas /etc/rc.d/rc.unspin unpause mybackup
+```
+
+- Calling `pause` again with the same name refreshes the lock. The last call decides: `pause mybackup` without `--ttl` makes it permanent again.
+- Times are a number with `s`, `m`, `h` or `d` (e.g. `90s`, `15m`, `2h`, `1d`).
+- A lock not refreshed within its time is removed by Unspin and logged as `Pause lock expired - mybackup`.
+- `rc.unspin status` shows how long each of these locks has left.
 
 The daemon also accepts signals directly (no stacking):
 

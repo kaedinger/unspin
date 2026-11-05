@@ -1,7 +1,8 @@
 #!/bin/bash
 # rc.unspin - Unspin daemon service controller
 # Usage: /etc/rc.d/rc.unspin {start|stop|restart|status}
-#        /etc/rc.d/rc.unspin {pause|unpause} <name>
+#        /etc/rc.d/rc.unspin pause <name> [--ttl <time>]   # e.g. --ttl 15m
+#        /etc/rc.d/rc.unspin unpause <name>
 #        /etc/rc.d/rc.unspin toggle [name]   # name only needed when this pauses
 
 DAEMON=/usr/local/sbin/unspind
@@ -9,8 +10,16 @@ PID_FILE=/var/run/unspind.pid
 PAUSE_DIR=/var/run/unspind.pause.d
 LOG_FILE=/var/log/unspin.log
 
+CFG_FILE=/boot/config/plugins/unspin/unspin.cfg
+
 log_info() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO ] $1" >> "$LOG_FILE"
+}
+
+# Only with Log Level set to Debug in the settings, like the daemon's debug lines.
+log_debug() {
+    grep -qE '^LOG_LEVEL="?debug"?' "$CFG_FILE" 2>/dev/null || return 0
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $1" >> "$LOG_FILE"
 }
 
 pause_count() {
@@ -71,7 +80,19 @@ unspin_status() {
         n=$(pause_count)
         if [ "$n" -gt 0 ]; then
             echo "Paused ($n lock(s)):"
-            ls -1 "$PAUSE_DIR" 2>/dev/null | sed 's/^/  /'
+            local f ttl left now
+            now=$(date +%s)
+            for f in "$PAUSE_DIR"/*; do
+                [ -f "$f" ] || continue
+                ttl=$(cat "$f" 2>/dev/null)
+                if [[ "$ttl" =~ ^[0-9]+$ ]] && [ "$ttl" -gt 0 ]; then
+                    left=$(( ttl - (now - $(stat -c %Y "$f")) ))
+                    [ "$left" -lt 0 ] && left=0
+                    echo "  $(basename "$f") (expires in $(fmt_secs "$left") unless refreshed)"
+                else
+                    echo "  $(basename "$f")"
+                fi
+            done
         fi
         return 0
     else
@@ -92,18 +113,62 @@ validate_name() {
     return 0
 }
 
+# "90s", "15m", "2h", "1d" -> seconds; empty output = invalid.
+parse_ttl() {
+    [[ "$1" =~ ^([0-9]{1,6})([smhd])$ ]] || return
+    local n=$(( 10#${BASH_REMATCH[1]} ))
+    case "${BASH_REMATCH[2]}" in
+        s) echo "$n" ;;
+        m) echo $(( n * 60 )) ;;
+        h) echo $(( n * 3600 )) ;;
+        d) echo $(( n * 86400 )) ;;
+    esac
+}
+
+fmt_secs() {
+    local s=$1
+    if   [ "$s" -ge 3600 ]; then echo "$(( s / 3600 ))h $(( s % 3600 / 60 ))m"
+    elif [ "$s" -ge 60 ];   then echo "$(( s / 60 ))m $(( s % 60 ))s"
+    else                         echo "${s}s"
+    fi
+}
+
+# A lock with --ttl holds the TTL in seconds as file content and expires if its
+# mtime (last pause call) is older than that; unspind removes it then. Calling
+# pause again refreshes the lock, and the last call decides: without --ttl the
+# lock doesn't expire.
 unspin_pause() {
-    validate_name "$1" "pause" || return 1
+    local name="$1" ttl=""
+    validate_name "$name" "pause" || return 1
+    if [ -n "$2" ]; then
+        if [ "$2" != "--ttl" ] || [ -z "$3" ] || [ -n "$4" ]; then
+            echo "Usage: $0 pause <name> [--ttl <time>]   (time e.g. 90s, 15m, 2h, 1d)"
+            return 1
+        fi
+        ttl=$(parse_ttl "$3")
+        if [ -z "$ttl" ] || [ "$ttl" -le 0 ]; then
+            echo "Error: invalid --ttl '$3' - use a number with s, m, h or d (e.g. 15m)."
+            return 1
+        fi
+    fi
     if ! is_running; then
         echo "unspind is not running."
         return 1
     fi
     mkdir -p "$PAUSE_DIR"
-    touch "$PAUSE_DIR/$1"
-    local n
+    local existed=0 n info=""
+    [ -f "$PAUSE_DIR/$name" ] && existed=1
+    printf '%s' "$ttl" > "$PAUSE_DIR/$name"
     n=$(pause_count)
-    log_info "Pause lock added - $1 ($n lock(s) held)"
-    echo "unspind paused by '$1' ($n lock(s) held)."
+    [ -n "$ttl" ] && info=", expires $(fmt_secs "$ttl") after the last refresh"
+    if [ "$existed" -eq 1 ]; then
+        # Debug only: a job refreshing its lock every few minutes would fill the log.
+        log_debug "Pause lock refreshed - $name ($n lock(s) held$info)"
+        echo "Pause lock '$name' refreshed ($n lock(s) held$info)."
+    else
+        log_info "Pause lock added - $name ($n lock(s) held$info)"
+        echo "unspind paused by '$name' ($n lock(s) held$info)."
+    fi
 }
 
 unspin_unpause() {
@@ -150,10 +215,11 @@ case "$1" in
     stop)    unspin_stop ;;
     restart) unspin_stop; sleep 1; unspin_start ;;
     status)  unspin_status ;;
-    pause)   unspin_pause "$2" ;;
+    pause)   unspin_pause "$2" "$3" "$4" "$5" ;;
     unpause) unspin_unpause "$2" ;;
     toggle)  unspin_toggle "$2" ;;
     *)       echo "Usage: $0 {start|stop|restart|status|toggle [name]}"
-             echo "       $0 {pause|unpause} <name>"
+             echo "       $0 pause <name> [--ttl <time>]   (time e.g. 90s, 15m, 2h, 1d)"
+             echo "       $0 unpause <name>"
              exit 1 ;;
 esac

@@ -23,6 +23,7 @@
 - feat: promotion statistics on the settings page - files and size moved to the cache pools today, average per day and in total. One summary line (summed over all pools) that folds out to a table per pool, with a reset button. Kept in RAM and saved to /boot/config/plugins/unspin/stats at most once an hour and when the daemon stops
 - feat: the Detected Shares list folds into one summary line with share counts; click it to show the shares. Both foldable sections remember their state per browser
 - cosmetics: Pool Fill Limits rows no longer reach past the settings column
+- feat: pause locks can expire - rc.unspin pause NAME --ttl 15m removes the lock if it isn't refreshed (by calling pause again) within that time, so a backup job that dies mid-run no longer leaves Unspin paused. rc.unspin status shows the time left (GH #13)
 - fix: installed files were owned by uid/gid 1001 (the build machine's user) instead of root; the package now stores root:root
 
 ### 2026.10.17.48740

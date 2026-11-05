@@ -697,15 +697,29 @@ static bool transfers_active() {
 // directory itself instead of trusting a signal from rc.unspin, since detecting the
 // exact 0->1 / 1->0 transition from a separate process is inherently racy when two
 // pause/unpause calls land close together (see PAUSE_DIR comment above).
+// A lock set with `pause <name> --ttl` holds its TTL in seconds as file content;
+// its mtime is the last refresh. One not refreshed within its TTL (the job that
+// set it died or its VM was stopped) is removed here. Empty = never expires.
 static bool pause_locks_present() {
     DIR* d = opendir(PAUSE_DIR.c_str());
     if (!d) return false;  // directory doesn't exist yet = no locks held
     auto found = false;
+    auto now   = time(nullptr);
     struct dirent* ent;
     while ((ent = readdir(d)) != nullptr) {
         if (std::strcmp(ent->d_name, ".") == 0 || std::strcmp(ent->d_name, "..") == 0) continue;
+        auto path = PAUSE_DIR + "/" + ent->d_name;
+        long ttl  = 0;
+        std::ifstream f(path);
+        if (f) f >> ttl;
+        struct stat st;
+        if (ttl > 0 && stat(path.c_str(), &st) == 0 && now - st.st_mtime > ttl) {
+            if (unlink(path.c_str()) == 0)
+                log_info(std::string("Pause lock expired - ") + ent->d_name
+                         + " (not refreshed within " + std::to_string(ttl) + "s)");
+            continue;
+        }
         found = true;
-        break;
     }
     closedir(d);
     return found;
@@ -724,7 +738,8 @@ static bool pause_dir_active() {
 // Combined pause state: a direct SIGUSR1/SIGUSR2/SIGRTMIN signal (manual, documented
 // on the CLI banner) OR at least one named lock in PAUSE_DIR (rc.unspin pause/unpause).
 static bool is_paused() {
-    return _paused || pause_dir_active();
+    auto locks = pause_dir_active();  // first, so expired locks are removed even while signal-paused
+    return _paused || locks;
 }
 
 // ---------------------------------------------------------------------------
