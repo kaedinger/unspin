@@ -41,6 +41,7 @@ package:
 	@cd $(BUILD) && \
 	  tar --create \
 	      --xz \
+	      --owner=0 --group=0 --numeric-owner \
 	      --file=../../$(PKG_DIR)/$(PLUGIN)-$(VERSION)-x86_64-1.txz \
 	      install/ usr/ etc/
 
