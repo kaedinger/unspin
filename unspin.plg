@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- fix: when the log location (/var/log) ran full because of other logs, Unspin stopped logging for good and rewrote its own log every minute without freeing anything. It now resumes logging once space is free again, starts on a fresh line after a cut-off line, and logs one warning that the location is full
+
 ### 2026.11.07.56244
 - fix: unspind could crash when a program ended at the very moment it was checked for the Mover
 - fix: an invalid number in the settings no longer stops unspind on a reload; the previous value is kept and a warning logged

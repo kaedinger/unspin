@@ -177,8 +177,37 @@ static void check_log_size() {
     trim_log();
 }
 
+static bool   _log_active     = false; // open_log() was called, so the log file is wanted
+static time_t _log_reopen_at  = 0;     // last reopen attempt after a failed write
+static bool   _log_full_warned = false;
+
+// A write that ran out of space can leave a partial last line.
+static bool log_ends_mid_line() {
+    std::ifstream in(_cfg.log_file, std::ios::binary | std::ios::ate);
+    char c;
+    return in && in.tellg() > 0 && in.seekg(-1, std::ios::end) && in.get(c) && c != '\n';
+}
+
+// Opens the log for appending; the next line starts on a fresh line.
+static void open_log() {
+    _log_active = true;
+    _log_stream.open(_cfg.log_file, std::ios::app);
+    if (_log_stream.is_open() && log_ends_mid_line()) _log_stream << '\n';
+}
+
 static void vlog(const char* level, const std::string& msg) {
     auto now = time(nullptr);
+    // After a failed write (e.g. the log location was full) the stream stays
+    // in a failed state and drops everything; reopen it, at most once a second.
+    // close() writes out the line that failed, if there is room now, so end a
+    // partial line before that.
+    if (_log_active && (!_log_stream.is_open() || !_log_stream.good()) && now != _log_reopen_at) {
+        _log_reopen_at = now;
+        if (log_ends_mid_line()) { std::ofstream nl(_cfg.log_file, std::ios::app); nl << '\n'; }
+        _log_stream.close();
+        _log_stream.clear();
+        open_log();
+    }
     char ts[32];
     struct tm tm_buf;
     localtime_r(&now, &tm_buf);
@@ -218,8 +247,24 @@ static void trim_log() {
     if (stat(path.c_str(), &st) != 0) return;
     const long max_bytes = _cfg.log_max_size_mb * 1024L * 1024L;
     const bool over_size  = (long)st.st_size > max_bytes;
-    const bool location_full = disk_fill_percent(path) >= LOG_LOCATION_FULL_PERCENT;
+    const double fill_percent = disk_fill_percent(path);
+    const bool location_full = fill_percent >= LOG_LOCATION_FULL_PERCENT;
+    if (!location_full) _log_full_warned = false;
     if (!over_size && !location_full) return;
+
+    // Keep whole lines from the end, up to log_trim_size_mb.
+    const long trim_bytes = _cfg.log_trim_size_mb * 1024L * 1024L;
+
+    // The location is full, but trimming our own log would free nothing:
+    // other logs filled it. Rewriting the file would only risk losing lines.
+    if (!over_size && (long)st.st_size <= trim_bytes) {
+        if (!_log_full_warned) {
+            _log_full_warned = true;
+            log_warn("Log location of " + path + " is " + std::to_string((int)fill_percent) +
+                     "% full, filled by other logs. Log lines may get lost until space is freed.");
+        }
+        return;
+    }
 
     std::vector<std::string> lines;
     {
@@ -229,8 +274,6 @@ static void trim_log() {
         while (std::getline(in, line)) lines.push_back(std::move(line));
     }
 
-    // Keep whole lines from the end, up to log_trim_size_mb.
-    const long trim_bytes = _cfg.log_trim_size_mb * 1024L * 1024L;
     long kept_bytes = 0;
     auto start = lines.size();
     while (start > 0) {
@@ -246,7 +289,7 @@ static void trim_log() {
         for (auto i = start; i < lines.size(); ++i)
             out << lines[i] << '\n';
     }
-    _log_stream.open(path, std::ios::app);
+    open_log();
     log_info("Log trimmed to " + std::to_string(_cfg.log_trim_size_mb) + " MB" +
               (location_full ? " (log location was nearly full)" : "") + ".");
 }
@@ -1848,7 +1891,7 @@ int main(int argc, char* argv[]) {
     if (override_dry_run) _cfg.dry_run = true;
     if (override_debug)   _cfg.debug   = true;
 
-    _log_stream.open(_cfg.log_file, std::ios::app);
+    open_log();
     if (!_log_stream.is_open())
         std::cerr << "Warning: cannot open log file " << _cfg.log_file << "\n";
 
@@ -1897,7 +1940,7 @@ int main(int argc, char* argv[]) {
             load_config();
             if (override_dry_run) _cfg.dry_run = true;
             if (override_debug)   _cfg.debug   = true;
-            _log_stream.open(_cfg.log_file, std::ios::app);
+            open_log();
             log_config();
             fan_fd = init_fanotify();
             if (fan_fd < 0) {
