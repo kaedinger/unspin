@@ -36,6 +36,8 @@ Make sure this does what you want! There's a dry-run mode; use it!
 
 Promotion is always deferred until all open handles on the file are closed. Unlinking the source while a reader (SMB, NFS, local process) still holds an fd would cause the client to lose the file - shfs does not redirect to the cache copy mid-stream. By waiting for close, the next open transparently picks up the promoted copy.
 
+Unspin can't wake a sleeping disk, even in rare cases. A file can be read from RAM while its disk sleeps; it is not promoted then, because removing the array copy would wake the disk (and parity). It gets promoted on a later access with the disk awake. Unspin takes the spin state from Unraid and never touches a sleeping disk itself.
+
 There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mover Tuning.
 
 ---

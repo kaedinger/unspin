@@ -20,6 +20,7 @@
 
 <CHANGES>
 ### next
+- fix: Unspin can no longer wake a sleeping disk, even in rare cases, i.e. a file read from RAM or check for ZFS datasets
 - fix: when the log location (/var/log) ran full because of other logs, Unspin stopped logging for good and rewrote its own log every minute without freeing anything. It now resumes logging once space is free again, starts on a fresh line after a cut-off line, and logs one warning that the location is full
 - new: if the daemon dies unexpectedly, the log says why, and the next start notes the unclean stop
 

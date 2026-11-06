@@ -4,6 +4,7 @@
 // Compile: g++ -O2 -Wall -o unspind unspind.cpp
 // Requires: Linux kernel 2.6.37+ (fanotify), CAP_SYS_ADMIN (run as root)
 
+#include <cctype>
 #include <cerrno>
 #include <climits>
 #include <csignal>
@@ -133,6 +134,7 @@ struct AccessRecord {
     PromoteDecision    pending_dec;
     bool               promoted        = false;
     bool               has_write_open  = false; // FAN_MODIFY seen while file is open
+    time_t             asleep_logged   = 0;     // sleep period (spundown_at) of the last "not waking it" INFO line
 };
 
 struct ShareInfo {
@@ -1135,6 +1137,150 @@ static bool copy_file(const std::string& src, const std::string& dst) {
 }
 
 // ---------------------------------------------------------------------------
+// Disk state
+// ---------------------------------------------------------------------------
+// Unspin must never wake a sleeping disk. The spin state of each array disk
+// comes from emhttpd's disks.ini. That only shows a spin-up once it's done
+// (measured: ~0.3 s after an ~11 s spin-up), so the block-layer counters in
+// /proc/diskstats tell whether a disk marked as spun down has seen I/O since:
+// if it has, it's spinning up or already up. A disk put to sleep outside
+// Unraid (hdparm -y) never shows up in disks.ini, but Unraid's own polling
+// wakes such a disk again within seconds anyway (measured: 22 s).
+
+static const std::string DISKS_INI = "/var/local/emhttp/disks.ini";
+static const std::string DISKSTATS = "/proc/diskstats";
+
+struct IoCounters {
+    uint64_t reads = 0, writes = 0, in_flight = 0;
+};
+
+struct DiskState {
+    std::string name;                  // "disk4"
+    std::string device;                // "sdb"
+    std::string mount;                 // "/mnt/disk4"
+    bool        spundown     = false;  // as disks.ini reports it
+    time_t      spundown_at  = 0;      // when Unspin saw it spin down (identifies the sleep period)
+    IoCounters  baseline;              // counters at spin-down
+    bool        io_seen      = false;  // I/O since spin-down: spinning up or up
+};
+
+static std::vector<DiskState> _disks;
+static struct timespec        _disks_ini_mtime = {0, 0};
+
+static std::unordered_map<std::string, IoCounters> read_diskstats() {
+    std::unordered_map<std::string, IoCounters> out;
+    std::ifstream f(DISKSTATS);
+    std::string line;
+    while (std::getline(f, line)) {
+        // major minor name reads merged sectors ms writes merged sectors ms in_flight ...
+        std::istringstream ss(line);
+        unsigned major, minor;
+        std::string name;
+        uint64_t v[8];
+        IoCounters c;
+        if (!(ss >> major >> minor >> name)) continue;
+        if (!(ss >> c.reads >> v[0] >> v[1] >> v[2] >> c.writes >> v[3] >> v[4] >> v[5] >> c.in_flight)) continue;
+        out[name] = c;
+    }
+    return out;
+}
+
+// Re-reads disks.ini when it changed. Keeps the per-disk state across reloads,
+// so a spin-down baseline survives emhttpd rewriting the file.
+static void load_disks() {
+    std::ifstream f(DISKS_INI);
+    if (!f) return;
+    std::vector<DiskState> fresh;
+    std::unordered_map<std::string, std::string> kv;
+    auto flush = [&]() {
+        if (kv["type"] == "Data" && !kv["fsMountpoint"].empty() && !kv["device"].empty()) {
+            DiskState d;
+            d.name     = kv["name"];
+            d.device   = kv["device"];
+            d.mount    = kv["fsMountpoint"];
+            d.spundown = kv["spundown"] == "1";
+            fresh.push_back(d);
+        }
+        kv.clear();
+    };
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line[0] == '[') { flush(); continue; }
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        auto v = line.substr(eq + 1);
+        if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
+        kv[line.substr(0, eq)] = v;
+    }
+    flush();
+
+    std::unordered_map<std::string, IoCounters> io;
+    auto now = time(nullptr);
+    for (auto& d : fresh) {
+        auto old = std::find_if(_disks.begin(), _disks.end(),
+                                [&](const DiskState& o) { return o.name == d.name; });
+        auto was_spundown = old != _disks.end() && old->device == d.device && old->spundown;
+        if (d.spundown && was_spundown) {
+            d.spundown_at = old->spundown_at;
+            d.baseline    = old->baseline;
+            d.io_seen     = old->io_seen;
+        } else if (d.spundown) {
+            if (io.empty()) io = read_diskstats();
+            d.spundown_at = now;
+            d.baseline    = io[d.device];
+            log_debug(d.name + " spun down");
+        } else if (was_spundown) {
+            log_debug(d.name + " spun up");
+        }
+    }
+    _disks.swap(fresh);
+}
+
+// Called on every main-loop pass and before every promotion: picks up a
+// changed disks.ini, and notices I/O on disks marked as spun down.
+static void update_disk_state() {
+    struct stat st;
+    if (stat(DISKS_INI.c_str(), &st) == 0 &&
+        (st.st_mtim.tv_sec != _disks_ini_mtime.tv_sec || st.st_mtim.tv_nsec != _disks_ini_mtime.tv_nsec)) {
+        _disks_ini_mtime = st.st_mtim;
+        load_disks();
+    }
+    auto pending = std::any_of(_disks.begin(), _disks.end(),
+                               [](const DiskState& d) { return d.spundown && !d.io_seen; });
+    if (!pending) return;
+    auto io = read_diskstats();
+    for (auto& d : _disks) {
+        if (!d.spundown || d.io_seen) continue;
+        auto it = io.find(d.device);
+        if (it == io.end()) continue;
+        const auto& c = it->second;
+        if (c.reads != d.baseline.reads || c.writes != d.baseline.writes || c.in_flight > 0) {
+            d.io_seen = true;
+            log_debug(d.name + " is spinning up");
+        }
+    }
+}
+
+// The array disk a path lives on (longest mountpoint prefix, so nested ZFS
+// dataset mounts count too), or nullptr.
+static DiskState* disk_for_path(const std::string& path) {
+    DiskState* best = nullptr;
+    for (auto& d : _disks) {
+        if (path.compare(0, d.mount.size(), d.mount) != 0) continue;
+        if (path.size() > d.mount.size() && path[d.mount.size()] != '/') continue;
+        if (!best || d.mount.size() > best->mount.size()) best = &d;
+    }
+    return best;
+}
+
+// The disk a path lives on, if that disk is asleep; nullptr otherwise.
+static const DiskState* sleeping_disk(const std::string& path) {
+    update_disk_state();
+    auto d = disk_for_path(path);
+    return (d && d->spundown && !d->io_seen) ? d : nullptr;
+}
+
+// ---------------------------------------------------------------------------
 // Promotion statistics
 // ---------------------------------------------------------------------------
 
@@ -1342,6 +1488,15 @@ static void try_promote(const std::string& path, int64_t size, const std::string
     if (rec.promoted) return;
     if (auto running = transfers_running(); !running.empty()) {
         log_info("[" + dec.rule + "] " + running + " active, deferring: " + path);
+        return;
+    }
+    // The access came from RAM while the disk sleeps. Removing the array copy
+    // would wake it (and parity); the rule fires again on a later access.
+    if (auto disk = sleeping_disk(path)) {
+        auto msg = "[" + dec.rule + "] " + disk->name +
+                   " is spun down, not waking it - promoting on a later access: " + qpath(path);
+        if (rec.asleep_logged != disk->spundown_at) { log_info(msg); rec.asleep_logged = disk->spundown_at; }
+        else                                        { log_debug(msg); }
         return;
     }
 
@@ -1587,6 +1742,15 @@ static void promote_stale_pending() {
     auto now = time(nullptr);
     for (auto& [path, rec] : _access_map) {
         if (!rec.pending_promote || now - rec.last_event < PENDING_PROMOTE_STALE_SEC) continue;
+        // Even the lstat() below could wake a sleeping disk once the inode
+        // left the cache. Dropped like a transfer deferral: the next access
+        // with the disk awake re-arms it.
+        if (auto disk = sleeping_disk(path)) {
+            rec.pending_promote = false;
+            log_debug("[" + rec.pending_dec.rule + "] Stale pending promotion dropped, " +
+                      disk->name + " is spun down: " + path);
+            continue;
+        }
         struct stat st;
         auto sname = path_share_name(path);
         if (lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
@@ -1651,24 +1815,36 @@ static bool mark_path(int fd, const std::string& path) {
 // separate filesystems nested one level under the disk mount (GH #8). FAN_MARK_MOUNT
 // does not cross into a nested mount, so each dataset needs its own explicit mark.
 // Only one level deep: Unraid only auto-creates datasets for top-level shares, never
-// nested subfolders.
+// nested subfolders. The mounts come from /proc/self/mountinfo, not from listing
+// the disk: that listing runs every minute and could wake a sleeping disk.
 static void mark_submounts(int fd, const std::string& base,
                             std::unordered_set<std::string>& known) {
-    DIR* d = opendir(base.c_str());
-    if (!d) return;
-    struct dirent* ent;
-    while ((ent = readdir(d)) != nullptr) {
-        if (ent->d_name[0] == '.') continue;
-        std::string child = base + "/" + ent->d_name;
+    std::ifstream f("/proc/self/mountinfo");
+    std::string line;
+    while (std::getline(f, line)) {
+        // id parent major:minor root mountpoint ... - the mount point is field 5,
+        // with spaces, tabs, newlines and backslashes octal-escaped (\040 etc.).
+        std::istringstream ss(line);
+        std::string skip, raw;
+        if (!(ss >> skip >> skip >> skip >> skip >> raw)) continue;
+        std::string child;
+        for (size_t i = 0; i < raw.size(); ++i) {
+            if (raw[i] == '\\' && i + 3 < raw.size() && isdigit((unsigned char)raw[i + 1])) {
+                child += (char)std::stoi(raw.substr(i + 1, 3), nullptr, 8);
+                i += 3;
+            } else {
+                child += raw[i];
+            }
+        }
+        if (child.size() <= base.size() + 1 || child.compare(0, base.size(), base) != 0 ||
+            child[base.size()] != '/' || child.find('/', base.size() + 1) != std::string::npos)
+            continue;
         if (known.count(child)) continue;
-        struct stat st;
-        if (lstat(child.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
-        if (is_mounted(child) && mark_path(fd, child)) {
+        if (mark_path(fd, child)) {
             log_info("Watching nested mount at: " + child);
             known.insert(child);
         }
     }
-    closedir(d);
 }
 
 // Block up to `secs` seconds, returning early when a signal is delivered.
@@ -2084,6 +2260,7 @@ int main(int argc, char* argv[]) {
         // Runs on its own schedule (not just when something gets logged), so
         // the log still gets trimmed while paused and otherwise quiet.
         check_log_size();
+        update_disk_state();
 
         if (_reload) {
             _reload = 0;
