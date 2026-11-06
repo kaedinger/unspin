@@ -1943,12 +1943,20 @@ static void process_events(int fan_fd) {
             auto len = readlink(proc_path, file_path, sizeof(file_path) - 1);
             if (len > 0) {
                 file_path[len] = '\0';
-                EvType ev = (meta->mask & FAN_ACCESS)         ? EvType::Read
-                          : (meta->mask & FAN_CLOSE_NOWRITE)  ? EvType::CloseNoWrite
-                          : (meta->mask & FAN_CLOSE_WRITE)    ? EvType::CloseWrite
-                          : (meta->mask & FAN_MODIFY)         ? EvType::Modify
-                          :                                     EvType::Open;
-                handle_event(file_path, ev);
+                // The kernel merges queued events of the same file and process
+                // into one, so a quick open-read-close can arrive as a single
+                // event with several bits set. Handle each bit, in the order
+                // they happen; handling only one lost the close, the open count
+                // never went back to 0 and a deferred promotion never ran.
+                static constexpr std::pair<uint64_t, EvType> ORDER[] = {
+                    {FAN_OPEN,          EvType::Open},
+                    {FAN_ACCESS,        EvType::Read},
+                    {FAN_MODIFY,        EvType::Modify},
+                    {FAN_CLOSE_WRITE,   EvType::CloseWrite},
+                    {FAN_CLOSE_NOWRITE, EvType::CloseNoWrite},
+                };
+                for (const auto& [bit, ev] : ORDER)
+                    if (meta->mask & bit) handle_event(file_path, ev);
             }
         }
         if (meta->fd >= 0) 
