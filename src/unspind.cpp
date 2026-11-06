@@ -12,6 +12,7 @@
 #include <cstring>
 #include <ctime>
 #include <deque>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -451,6 +452,156 @@ static void sig_handler(int sig) {
     else if (sig == SIGUSR1)                  _paused = 1;
     else if (sig == SIGUSR2)                  _paused = 0;
     else if (sig == SIGRTMIN)                 _paused = !_paused;
+}
+
+// ---------------------------------------------------------------------------
+// Crash report
+// ---------------------------------------------------------------------------
+// A daemon that dies should say why. rc.unspin sends stdout/stderr to
+// /dev/null, so an uncaught exception's message or a fatal signal would leave
+// no trace. The signal handler may only use async-signal-safe calls, so it
+// formats its log line by hand and writes it with write().
+
+// Exists while the daemon runs; left behind by a run that didn't stop cleanly.
+static const std::string RUNNING_MARKER = "/var/run/unspind.running";
+
+static char _crash_log[PATH_MAX] = "";   // copy of _cfg.log_file for the signal handler
+static long _tz_offset = 0;              // seconds east of UTC, refreshed periodically
+static char _altstack[65536];            // so a stack overflow can still be reported
+
+static void crash_prepare() {
+    snprintf(_crash_log, sizeof(_crash_log), "%s", _cfg.log_file.c_str());
+    auto now = time(nullptr);
+    struct tm tm_buf;
+    localtime_r(&now, &tm_buf);
+    _tz_offset = tm_buf.tm_gmtoff;
+}
+
+static char* put_str(char* p, const char* s) { while (*s) *p++ = *s++; return p; }
+
+static char* put_num(char* p, long v, int width = 0) {
+    char tmp[24];
+    int n = 0;
+    unsigned long u = v < 0 ? -(unsigned long)v : (unsigned long)v;
+    do { tmp[n++] = (char)('0' + u % 10); u /= 10; } while (u);
+    while (n < width) tmp[n++] = '0';
+    if (v < 0) *p++ = '-';
+    while (n) *p++ = tmp[--n];
+    return p;
+}
+
+// Local time as "YYYY-MM-DD HH:MM:SS" without localtime() (not signal-safe).
+static char* put_time(char* p) {
+    long t    = (long)time(nullptr) + _tz_offset;
+    long secs = t % 86400;
+    long z    = t / 86400 + 719468;               // days -> civil date (H. Hinnant)
+    long era  = z / 146097;
+    long doe  = z - era * 146097;
+    long yoe  = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long doy  = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long mp   = (5 * doy + 2) / 153;
+    long day  = doy - (153 * mp + 2) / 5 + 1;
+    long mon  = mp < 10 ? mp + 3 : mp - 9;
+    long year = yoe + era * 400 + (mon <= 2 ? 1 : 0);
+    p = put_num(p, year, 4); *p++ = '-'; p = put_num(p, mon, 2); *p++ = '-'; p = put_num(p, day, 2);
+    *p++ = ' ';
+    p = put_num(p, secs / 3600, 2); *p++ = ':'; p = put_num(p, secs / 60 % 60, 2); *p++ = ':';
+    return put_num(p, secs % 60, 2);
+}
+
+static const char* signal_name(int sig) {
+    switch (sig) {
+        case SIGSEGV:   return "SIGSEGV";   case SIGBUS:    return "SIGBUS";
+        case SIGFPE:    return "SIGFPE";    case SIGILL:    return "SIGILL";
+        case SIGABRT:   return "SIGABRT";   case SIGTRAP:   return "SIGTRAP";
+        case SIGSYS:    return "SIGSYS";    case SIGQUIT:   return "SIGQUIT";
+        case SIGALRM:   return "SIGALRM";   case SIGVTALRM: return "SIGVTALRM";
+        case SIGPROF:   return "SIGPROF";   case SIGXCPU:   return "SIGXCPU";
+        case SIGXFSZ:   return "SIGXFSZ";   case SIGPWR:    return "SIGPWR";
+        case SIGSTKFLT: return "SIGSTKFLT";
+        default:        return sig > SIGRTMIN && sig <= SIGRTMAX ? "a real-time signal" : "a signal";
+    }
+}
+
+static void fatal_signal(int sig, siginfo_t* si, void*) {
+    char buf[512];
+    char* p = put_time(buf);
+    p = put_str(p, " [ERROR] unspind killed by ");
+    p = put_str(p, signal_name(sig));
+    p = put_str(p, " (signal ");
+    p = put_num(p, sig);
+    *p++ = ')';
+    // si_code <= 0: sent by a process (kill, tgkill, sigqueue), not raised by a fault.
+    if (si && si->si_code <= 0) {
+        p = put_str(p, ", sent by pid ");
+        p = put_num(p, si->si_pid);
+        char path[48];
+        char* q = put_str(path, "/proc/");
+        q = put_num(q, si->si_pid);
+        q = put_str(q, "/comm");
+        *q = '\0';
+        int cfd = open(path, O_RDONLY | O_CLOEXEC);
+        if (cfd >= 0) {
+            char comm[32];
+            auto n = read(cfd, comm, sizeof(comm) - 1);
+            close(cfd);
+            if (n > 0) {
+                while (n > 0 && comm[n - 1] == '\n') --n;
+                comm[n] = '\0';
+                p = put_str(p, " (");
+                p = put_str(p, comm);
+                *p++ = ')';
+            }
+        }
+    }
+    *p++ = '\n';
+    int fd = open(_crash_log, O_WRONLY | O_APPEND | O_CLOEXEC);
+    if (fd >= 0) {
+        auto w = write(fd, buf, p - buf);
+        (void)w;
+        close(fd);
+    }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void on_terminate() {
+    std::string what = "std::terminate() without an exception";
+    if (auto e = std::current_exception()) {
+        try { std::rethrow_exception(e); }
+        catch (const std::exception& ex) { what = std::string("exception: ") + ex.what(); }
+        catch (...)                      { what = "exception of unknown type"; }
+    }
+    log_err("unspind crashed: uncaught " + what);
+    signal(SIGABRT, SIG_DFL);   // abort() below; fatal_signal() would log a second line
+    abort();
+}
+
+static void install_crash_handlers() {
+    std::set_terminate(on_terminate);
+    signal(SIGPIPE, SIG_IGN);   // a write to a closed pipe returns EPIPE instead of killing us
+
+    stack_t ss = {};
+    ss.ss_sp   = _altstack;
+    ss.ss_size = sizeof(_altstack);
+    sigaltstack(&ss, nullptr);
+
+    struct sigaction sa = {};
+    sa.sa_sigaction = fatal_signal;
+    sa.sa_flags     = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+    for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGTRAP, SIGSYS, SIGQUIT,
+                    SIGALRM, SIGVTALRM, SIGPROF, SIGXCPU, SIGXFSZ, SIGPWR, SIGSTKFLT})
+        sigaction(sig, &sa, nullptr);
+    for (int sig = SIGRTMIN + 1; sig <= SIGRTMAX; ++sig)   // SIGRTMIN itself toggles pause
+        sigaction(sig, &sa, nullptr);
+
+    if (access(RUNNING_MARKER.c_str(), F_OK) == 0)
+        log_warn("The previous unspind run ended without a clean stop. A crash report, if it "
+                 "could be written, is in the lines before; without one it was killed with "
+                 "SIGKILL or the system lost power.");
+    std::ofstream(RUNNING_MARKER).close();
+    chmod(RUNNING_MARKER.c_str(), 0644);   // umask(0) in main() would leave it world-writable
 }
 
 // ---------------------------------------------------------------------------
@@ -1903,6 +2054,8 @@ int main(int argc, char* argv[]) {
     signal(SIGRTMIN, sig_handler);
 
     log_info("=== unspind starting ===");
+    crash_prepare();
+    install_crash_handlers();
     log_config();
     init_nobody();
     load_stats();
@@ -1941,6 +2094,7 @@ int main(int argc, char* argv[]) {
             if (override_dry_run) _cfg.dry_run = true;
             if (override_debug)   _cfg.debug   = true;
             open_log();
+            crash_prepare();
             log_config();
             fan_fd = init_fanotify();
             if (fan_fd < 0) {
@@ -1979,10 +2133,12 @@ int main(int argc, char* argv[]) {
             // pending ZFS revert gets noticed).
             check_pool_atime();
             flush_stats();
+            crash_prepare();   // keeps the crash report's time right across DST changes
         }
     }
 
     flush_stats(true);
+    unlink(RUNNING_MARKER.c_str());
     unlink(PAUSE_STATE.c_str());
     close(fan_fd);
     log_info("unspind stopped.");
