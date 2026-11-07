@@ -47,6 +47,10 @@ PAUSE_ON_RSYNC="yes"
 # remounted relatime, ZFS datasets get atime=on relatime=on.
 ENABLE_POOL_ATIME="no"
 
+# Log and count which process, container, VM or SMB client wakes a sleeping
+# array disk (yes/no). Shown in the Disk Wake-ups section of the settings page.
+TRACK_WAKEUPS="yes"
+
 # Comma-separated partial path patterns to exclude from tiering
 EXCLUDE_PATTERNS="/qbittorrent"
 

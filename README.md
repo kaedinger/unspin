@@ -53,6 +53,7 @@ There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mo
 - **Mount-wait on boot** - waits for slow-mounting arrays/pools before watching a scan path; posts an Unraid notification if it has to wait, and another if the wait times out
 - **ZFS array disk support** - a top-level share on a ZFS-formatted array disk becomes its own dataset mount under the hood; Unspin detects and watches those automatically, both at startup and as new ones appear, so ZFS array disks work the same as XFS/Btrfs
 - **Recently Accessed Files panel** - on debug logging, the settings page shows the last 5 accessed files per disk (read count, promoted state) plus skipped-share hits, scraped from the log itself
+- **Disk wake-ups** - shows which program, container, VM or SMB client woke a sleeping array disk, with counts per disk and cause and the latest wake-ups. Access through user shares (`shfs`) is traced back to the program that asked for the file. A read served from RAM doesn't wake a disk and isn't counted; for a directory listing, the program waiting for the disk is shown, or "no file opened" if none was found; a command sent to the disk (spin-up, SMART) as "no I/O seen"
 - **Per-pool fill guard** - each pool gets its own fill % threshold; promotion to that pool stops once it's exceeded
 - **Dry-run mode** - logs every decision without moving anything
 - **Exclude patterns** - skip any path substring
@@ -125,6 +126,7 @@ unspin/
 | `RULE3_ENABLED` | `yes` | Enable large-file long-window rule |
 | `RULE3_MIN_READS` | `5` | Thumbnail filter: skip opens with fewer reads than this (0 = disabled) |
 | `PAUSE_ON_RSYNC` | `yes` | Also pause while any `rsync` process is running (covers tools like Unbalanced or Mover Tuning's rsync-based transfers). Unraid's mover itself is always detected regardless of this setting. |
+| `TRACK_WAKEUPS` | `yes` | Log and count which program, container, VM or SMB client wakes a sleeping array disk; shown under Disk Wake-ups on the settings page. Keeps running while Unspin is paused. |
 | `ENABLE_POOL_ATIME` | `no` | Turn access times on for the pools Unspin promotes into, for Mover Tuning's "Use ATIME" filter (see below). Btrfs/XFS pools are remounted `relatime` (re-applied after every array start); ZFS datasets get `atime=on relatime=on` (untested). Switching it off only undoes Unspin's own changes, now or at the next array start. |
 | `DRY_RUN` | `yes` | Log promotion decisions without moving files |
 | `LOG_LEVEL` | `info` | `info` or `debug` |

@@ -76,6 +76,71 @@ function promotion_stats() {
             'detail'  => $detail];
 }
 
+// Disk wake-ups from the daemon's wakeups file (RAM copy, or the flash copy after
+// a reboot): "C date disk label count" lines per day, disk and cause, and
+// "W epoch disk label name access path also" lines for the recent wake-ups.
+// Returns the same shape as promotion_stats(): a summary line, the header text
+// while open, and the detail HTML (per disk and cause, then the latest ones).
+function disk_wakeups() {
+    $today  = date('Y-m-d');
+    $since  = null;
+    $counts = [];   // disk => label => [today, total]
+    $recent = [];
+    $file   = file_exists('/var/run/unspind.wakeups') ? '/var/run/unspind.wakeups' : '/boot/config/plugins/unspin/wakeups';
+    foreach (@file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        $f = explode("\t", $line);
+        if ($f[0] === 'C' && count($f) === 5) {
+            [, $date, $disk, $label, $n] = $f;
+            if ($since === null || $date < $since) $since = $date;
+            $c = $counts[$disk][$label] ?? [0, 0];
+            if ($date === $today) $c[0] += (int)$n;
+            $c[1] += (int)$n;
+            $counts[$disk][$label] = $c;
+        } elseif ($f[0] === 'W' && count($f) === 8) {
+            $recent[] = ['at' => (int)$f[1], 'disk' => $f[2], 'label' => $f[3], 'name' => $f[4],
+                         'access' => $f[5], 'path' => $f[6], 'also' => $f[7]];
+        }
+    }
+    if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet', 'detail' => ''];
+
+    $days = max(1, (int)round((strtotime($today) - strtotime($since)) / 86400) + 1);
+    $avg  = fn($n) => number_format($n / $days, $n / $days < 10 ? 1 : 0);
+    $sum  = [0, 0];
+    foreach ($counts as $labels) foreach ($labels as $c) { $sum[0] += $c[0]; $sum[1] += $c[1]; }
+
+    $e = fn($s) => htmlspecialchars($s);
+    $detail = '<div class="hf-stats-grid hf-wake-grid"><span></span><span>Today</span><span>Avg/day</span><span>Total</span>';
+    uksort($counts, 'strnatcmp');
+    foreach ($counts as $disk => $labels) {
+        $dt = [array_sum(array_column($labels, 0)), array_sum(array_column($labels, 1))];
+        $detail .= '<span class="hf-stats-sum">' . $e($disk) . '</span><span class="hf-stats-sum">' . $dt[0] .
+                   '</span><span class="hf-stats-sum">' . $avg($dt[1]) . '</span><span class="hf-stats-sum">' . $dt[1] . '</span>';
+        uasort($labels, fn($a, $b) => $b[1] <=> $a[1]);
+        foreach ($labels as $label => $c)
+            $detail .= '<span class="hf-wake-label" title="' . $e($label) . '">' . $e($label) . '</span><span>' . $c[0] .
+                       '</span><span>' . $avg($c[1]) . '</span><span>' . $c[1] . '</span>';
+    }
+    $detail .= '</div>';
+
+    if ($recent) {
+        $detail .= '<div class="hf-wake-recent"><div class="hf-wake-head">Latest wake-ups</div>';
+        foreach (array_slice(array_reverse($recent), 0, 20) as $w) {
+            $when = date(date('Y-m-d', $w['at']) === $today ? 'H:i' : 'M j H:i', $w['at']);
+            $what = $w['path'] !== '' ? $w['access'] . ' ' . basename($w['path']) : '';
+            $tip  = trim($w['path'] . ($w['also'] !== '' ? "\nAlso active: " . $w['also'] : ''));
+            $detail .= '<div title="' . $e($tip) . '"><span class="hf-wake-when">' . $e($when) . '</span> ' .
+                       $e($w['disk']) . ' &middot; ' . $e($w['label']) . ($what !== '' ? ' &middot; ' . $e($what) : '') . '</div>';
+        }
+        $detail .= '</div>';
+    }
+
+    $last = end($recent);
+    return ['summary' => 'Today ' . $sum[0] . ' · Avg ' . $avg($sum[1]) . ' · Total ' . $sum[1] .
+                         ($last ? ' · Last: ' . $last['name'] : ''),
+            'open'    => 'Per disk and cause, averaged over ' . number_format($days) . ($days == 1 ? ' day' : ' days'),
+            'detail'  => $detail];
+}
+
 // Why the daemon is paused, for the status line: what it reports itself in
 // /var/run/unspind.pause-reasons (a running Mover or rsync, a pause by signal),
 // then the names of the pause locks in /var/run/unspind.pause.d.

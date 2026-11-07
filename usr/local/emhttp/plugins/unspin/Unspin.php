@@ -270,6 +270,13 @@ dt.hf-share-name {
 .hf-stats-grid > span:nth-child(-n+4) { opacity: 0.7; }
 .hf-stats-sum { font-weight: bold; }
 
+/* Disk wake-ups: a long cause (an SMB user@client) is cut, not widening the grid */
+.hf-wake-grid { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.hf-wake-label { overflow: hidden; text-overflow: ellipsis; padding-left: 1em; }
+.hf-wake-recent { width: 400px; max-width: 100%; margin: 8px 0 6px; }
+.hf-wake-recent > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hf-wake-head, .hf-wake-when { opacity: 0.7; }
+
 /* Pool Fill Limits row, kept within the settings column */
 .hf-pool-row { width: 400px; max-width: 100%; margin-bottom: 4px; }
 .hf-pool-mnt { flex: 0 0 9em; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -301,6 +308,23 @@ dt.hf-share-name {
       <input type="button" value="Reset Statistics" onclick="hfResetStats()">
     </div>
     <div class="hf-help">Files Unspin moved to the cache pools: today, average per day and in total, summed over all pools. Click the line for the numbers per pool. Dry run promotions are not counted. The average counts every day since the first promotion, including days without any. Updated about once a minute.</div>
+  </dd>
+
+<?php $wakeups = disk_wakeups(); ?>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Disk Wake-ups</dt>
+  <dd>
+    <div class="hf-fold-line" onclick="hfFold('wakeups')" title="Click for details per disk and the latest wake-ups">
+      <span id="hf-fold-caret-wakeups">&#9656;</span> <span id="hf-wakeups-line"><?= htmlspecialchars($wakeups['summary']) ?></span>
+    </div>
+    <div class="hf-fold-wakeups" style="display:none;">
+      <div id="hf-wakeups-table"><?= $wakeups['detail'] ?></div>
+      <input type="button" value="Reset Wake-ups" onclick="hfResetWakeups()">
+    </div>
+    <div class="hf-help">Which program, container, VM or SMB client woke a sleeping array disk: today, average per day and in total, with the last cause. Click the line for the numbers per disk and cause and the latest wake-ups; hover over one for the full path. A read served from RAM doesn't wake a disk and isn't counted.
+      <br><em>Accessing</em>: the disk woke for a directory listing or a file check, which opens no file; the program shown was found waiting for the disk.
+      <br><em>No file opened</em>: the same, but no waiting program was found, for example because it runs inside a container. The <em>Dynamix Cache Directories</em> plugin prevents most of these.
+      <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.
+      <br>Parity is not listed: it wakes when a data disk is written, and that write is listed under the data disk. Pools are not watched.</div>
   </dd>
 </dl>
 
@@ -372,6 +396,15 @@ dt.hf-share-name {
       <?= opt('no',  $c['PAUSE_ON_RSYNC'], 'No') ?>
     </select>
     <div class="hf-help">Pause monitoring while any <code>rsync</code> process is running on the system. Unraid's Mover always pauses Unspin regardless of this setting. Tools like <em>Unbalanced</em> and <em>Mover Tuning</em> use rsync to move files between array disks - leaving this enabled prevents their activity from inflating access counters and triggering false promotions. <strong>Default: Yes.</strong></div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Track Disk Wake-ups</dt>
+  <dd>
+    <select name="TRACK_WAKEUPS" id="hf_TRACK_WAKEUPS">
+      <?= opt('yes', $c['TRACK_WAKEUPS'] ?? 'yes', 'Yes') ?>
+      <?= opt('no',  $c['TRACK_WAKEUPS'] ?? 'yes', 'No') ?>
+    </select>
+    <div class="hf-help">Log and count which program, container, VM or SMB client wakes a sleeping array disk, shown under <strong>Disk Wake-ups</strong> above. Works on every array disk Unspin watches, excluded shares included, and keeps running while Unspin is paused. <strong>Default: Yes.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Access Times</dt>
@@ -876,24 +909,27 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
       HF_RECENT = r.recent;
       renderRecent(HF_RECENT.lists);
     }
-    if (r.stats) applyStats(r.stats);
+    if (r.stats)   applyFoldData('stats', r.stats);
+    if (r.wakeups) applyFoldData('wakeups', r.wakeups);
   }
 
-  function applyStats(stats) {
-    HF_STATS = stats;
-    document.getElementById('hf-stats-table').innerHTML = stats.detail;
-    renderStatsLine();
+  // Statistics sections (promotions, wake-ups): summary, header and detail table.
+  var HF_FOLD = { stats: <?= json_encode($stats) ?>, wakeups: <?= json_encode($wakeups) ?> };
+  function applyFoldData(name, data) {
+    HF_FOLD[name] = data;
+    document.getElementById('hf-' + name + '-table').innerHTML = data.detail;
+    renderFoldLine(name);
   }
+  function renderStatsLines() { renderFoldLine('stats'); renderFoldLine('wakeups'); }
 
-  // Statistics header: the summary while folded, the per-pool note while open.
+  // Statistics header: the summary while folded, the header text while open.
   // A summary too wide for the column is shrunk in steps down to 75%; past
   // that it's cut off with an ellipsis and shown in full as a tooltip.
-  var HF_STATS = <?= json_encode($stats) ?>;
-  function renderStatsLine() {
-    var line = document.getElementById('hf-stats-line');
+  function renderFoldLine(name) {
+    var line = document.getElementById('hf-' + name + '-line');
     var box  = line.parentNode;
-    var open = document.querySelector('.hf-fold-stats').style.display !== 'none';
-    line.textContent = open ? HF_STATS.open : HF_STATS.summary;
+    var open = document.querySelector('.hf-fold-' + name).style.display !== 'none';
+    line.textContent = open ? HF_FOLD[name].open : HF_FOLD[name].summary;
     line.style.fontSize = '';
     line.removeAttribute('title');
     // Measures the text itself, with a 1px margin: scrollWidth is rounded, so an
@@ -918,11 +954,11 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     if (open === undefined) open = items[0].style.display === 'none';
     items.forEach(function (el) { el.style.display = open ? '' : 'none'; });
     document.getElementById('hf-fold-caret-' + name).innerHTML = open ? '&#9662;' : '&#9656;';
-    if (name === 'stats') renderStatsLine();
+    if (HF_FOLD[name]) renderFoldLine(name);
     try { localStorage.setItem('unspin-fold-' + name, open ? '1' : '0'); } catch (e) {}
   };
 
-  ['stats', 'shares'].forEach(function (name) {
+  ['stats', 'wakeups', 'shares'].forEach(function (name) {
     var open = false;
     try { open = localStorage.getItem('unspin-fold-' + name) === '1'; } catch (e) {}
     if (open) hfFold(name, true);
@@ -944,11 +980,28 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     var reset = function () {
       hfPost({ action: 'reset_stats' }, function (r) {
         showMsg(r.message, r.ok);
-        if (r.stats) applyStats(r.stats);
+        if (r.stats) applyFoldData('stats', r.stats);
       });
     };
     if (typeof swal === 'function') {
       swal({ title: 'Reset Statistics', text: text, type: 'warning', showCancelButton: true,
+             confirmButtonText: 'Reset', cancelButtonText: 'Cancel' },
+           function (ok) { if (ok) reset(); });
+    } else if (confirm(text)) {
+      reset();
+    }
+  };
+
+  window.hfResetWakeups = function () {
+    var text = 'Reset the disk wake-up statistics for all disks? This cannot be undone.';
+    var reset = function () {
+      hfPost({ action: 'reset_wakeups' }, function (r) {
+        showMsg(r.message, r.ok);
+        if (r.wakeups) applyFoldData('wakeups', r.wakeups);
+      });
+    };
+    if (typeof swal === 'function') {
+      swal({ title: 'Reset Wake-ups', text: text, type: 'warning', showCancelButton: true,
              confirmButtonText: 'Reset', cancelButtonText: 'Cancel' },
            function (ok) { if (ok) reset(); });
     } else if (confirm(text)) {
@@ -961,7 +1014,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
                 'LARGE_SHORT_MIN_ACCESSES','LARGE_SHORT_WINDOW_MINS',
                 'LARGE_LONG_MIN_ACCESSES','LARGE_LONG_WINDOW_HOURS',
                 'EXCLUDE_PATTERNS','DRY_RUN','LOG_LEVEL','LOG_EXCLUDED_SHARES',
-                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC','ENABLE_POOL_ATIME',
+                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC','TRACK_WAKEUPS','ENABLE_POOL_ATIME',
                 'MOUNT_WAIT_TIMEOUT_MINS','MOUNT_RETRY_INTERVAL_SECS',
                 'RULE1_ENABLED','RULE1_FALLTHROUGH','RULE2_ENABLED','RULE3_ENABLED',
                 'RULE3_MIN_READS'];
@@ -1094,11 +1147,11 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   }, 10000);
 
   fitRecentPaths();
-  renderStatsLine();
+  renderStatsLines();
   var resizeTimer;
   window.addEventListener('resize', function () {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function () { fitRecentPaths(); renderStatsLine(); }, 150);
+    resizeTimer = setTimeout(function () { fitRecentPaths(); renderStatsLines(); }, 150);
   });
 }());
 </script>

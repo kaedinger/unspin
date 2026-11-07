@@ -111,6 +111,7 @@ if ($action === 'save') {
     $k = 'RULE3_MIN_READS';           $cfg[$k] = $pint($k, 0);
     $k = 'PAUSE_ON_RSYNC';            $cfg[$k] = $yn($k);
     $k = 'ENABLE_POOL_ATIME';         $cfg[$k] = $yn($k);
+    $k = 'TRACK_WAKEUPS';             $cfg[$k] = $yn($k);
     $k = 'MOUNT_WAIT_TIMEOUT_MINS';   $cfg[$k] = $pint($k, 0);
     $k = 'MOUNT_RETRY_INTERVAL_SECS'; $cfg[$k] = $pint($k, 1);
     save_cfg($cfg_file, $cfg);
@@ -166,6 +167,15 @@ if ($action === 'save') {
                       'running' => daemon_running($pid_file), 'stats' => promotion_stats()]);
     exit;
 
+} elseif ($action === 'reset_wakeups') {
+    // Same order as reset_stats: marker first.
+    touch('/var/run/unspind.wakeups-reset');
+    @unlink('/var/run/unspind.wakeups');
+    @unlink('/boot/config/plugins/unspin/wakeups');
+    echo json_encode(['ok' => true, 'message' => 'Wake-up statistics reset.',
+                      'running' => daemon_running($pid_file), 'wakeups' => disk_wakeups()]);
+    exit;
+
 } elseif ($action === 'detect_disks') {
     $paths = trim(shell_exec(
         "awk '\$2 ~ /^\\/mnt\\/disk[0-9]+\$/ {print \$2}' /proc/mounts 2>/dev/null | sort -V | paste -sd,"
@@ -210,6 +220,7 @@ if ($action === 'save') {
         'log'     => $log_lines,
         'recent'  => $recent,
         'stats'   => promotion_stats(),
+        'wakeups' => disk_wakeups(),
     ]);
     exit;
 
