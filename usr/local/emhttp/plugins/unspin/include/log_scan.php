@@ -74,7 +74,6 @@ function log_scan_classify($line, $scan_paths) {
     if (!$match) return null;
     [$disk, $path] = $match;
     $timestamp = substr($line, 0, 19);
-    $when      = fmt_when(strtotime($timestamp));
 
     if (preg_match('/ reads=(\d+) promoted=(yes|no)$/', $line, $m)) {
         return [$disk, [
@@ -83,7 +82,6 @@ function log_scan_classify($line, $scan_paths) {
             'reads'     => (int)$m[1],
             'promoted'  => $m[2] === 'yes',
             'timestamp' => $timestamp,
-            'when'      => $when,
         ]];
     }
     if (strpos($line, '[skip share] ') !== false) {
@@ -91,10 +89,35 @@ function log_scan_classify($line, $scan_paths) {
             'type'      => 'skip',
             'path'      => $path,
             'timestamp' => $timestamp,
-            'when'      => $when,
         ]];
     }
     return null;
+}
+
+// The "5 Recently Accessed Files" cards, one per disk, for the page and the poll.
+// The shown time is formatted on every render and not kept in the entries: the
+// page sends the lists back with each poll, so a kept time would stay in today's
+// format after midnight. The disk is the card title, so rows drop its prefix.
+function recent_panel($lists) {
+    $e    = fn($s) => htmlspecialchars($s);
+    $html = '';
+    foreach ($lists as $disk => $entries) {
+        $html .= '<div class="recent-disk hf-bordered" data-disk="' . $e($disk) . '">' .
+                 '<div class="recent-disk-title">' . $e($disk) . '</div><table class="recent-table"><tbody>';
+        if (!$entries) $html .= '<tr><td style="color:#888;">No activity yet.</td></tr>';
+        foreach ($entries as $x) {
+            $rel   = substr($x['path'], strlen($disk));
+            $html .= '<tr data-type="' . $e($x['type']) . '">' .
+                     '<td class="recent-path" data-full="' . $e($rel) . '" title="' . $e($x['path']) . '">' . $e($rel) . '</td>';
+            $html .= $x['type'] === 'access'
+                ? '<td class="recent-col">' . (int)$x['reads'] . ' reads</td>' .
+                  '<td class="recent-col">' . ($x['promoted'] ? 'Promoted' : 'Not yet') . '</td>'
+                : '<td class="recent-col-skip" colspan="2">Skipped</td>';
+            $html .= '<td class="hf-time" title="' . $e($x['timestamp']) . '">' . $e(fmt_when(strtotime($x['timestamp']))) . '</td></tr>';
+        }
+        $html .= '</tbody></table></div>';
+    }
+    return $html;
 }
 
 // Keep at most UNSPIN_ACCESS_CAP DISTINCT-path access entries and

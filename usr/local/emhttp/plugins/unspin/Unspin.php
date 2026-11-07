@@ -39,12 +39,6 @@ function opt($val, $current, $label) {
     return "<option value=\"" . htmlspecialchars($val) . "\"$sel>" . htmlspecialchars($label) . "</option>";
 }
 
-// The owning disk is already shown as the panel heading - drop its redundant
-// "/mnt/diskN" prefix from each row's path.
-function strip_disk_prefix($path, $disk) {
-    return substr($path, strlen($disk));
-}
-
 
 $defaults_file = "/usr/local/emhttp/plugins/unspin/unspin.cfg.default";
 $defaults = load_cfg($defaults_file);
@@ -233,6 +227,7 @@ dt.hf-share-name {
 }
 .recent-col { width: 70px; white-space: nowrap; }
 .recent-col-skip { width: 140px; white-space: nowrap; }
+#recent-disks.hf-hide-skip tr[data-type="skip"] { display: none; }
 .hf-time { width: 100px; white-space: nowrap; color: #888; text-align: right; }
 
 .recent-disks-grid {
@@ -677,32 +672,7 @@ dt.hf-share-name {
 
 <div id="recent-panel" style="margin-bottom:12px;<?= ($c['LOG_LEVEL'] ?? '') === 'debug' ? '' : 'display:none;' ?>">
   <strong style="display:block;margin-bottom:10px;">5 Recently Accessed Files</strong>
-  <div id="recent-disks" class="recent-disks-grid">
-<?php foreach ($recent_lists as $disk => $entries): ?>
-    <div class="recent-disk hf-bordered" data-disk="<?= htmlspecialchars($disk) ?>">
-      <div class="recent-disk-title"><?= htmlspecialchars($disk) ?></div>
-      <table class="recent-table">
-        <tbody>
-<?php foreach ($entries as $e): ?>
-          <tr data-type="<?= htmlspecialchars($e['type']) ?>">
-            <td class="recent-path" data-full="<?= htmlspecialchars(strip_disk_prefix($e['path'], $disk)) ?>" title="<?= htmlspecialchars($e['path']) ?>"><?= htmlspecialchars(strip_disk_prefix($e['path'], $disk)) ?></td>
-<?php if ($e['type'] === 'access'): ?>
-            <td class="recent-col"><?= (int)$e['reads'] ?> reads</td>
-            <td class="recent-col"><?= $e['promoted'] ? 'Promoted' : 'Not yet' ?></td>
-<?php else: ?>
-            <td class="recent-col-skip" colspan="2">Skipped</td>
-<?php endif; ?>
-            <td class="hf-time" title="<?= htmlspecialchars($e['timestamp']) ?>"><?= htmlspecialchars($e['when']) ?></td>
-          </tr>
-<?php endforeach; ?>
-<?php if (empty($entries)): ?>
-          <tr><td style="color:#888;">No activity yet.</td></tr>
-<?php endif; ?>
-        </tbody>
-      </table>
-    </div>
-<?php endforeach; ?>
-  </div>
+  <div id="recent-disks" class="recent-disks-grid"><?= recent_panel($recent_lists) ?></div>
 </div>
 
 <label style="display:block;margin-bottom:8px;">
@@ -787,43 +757,23 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     });
   }
 
-  function renderRecent(lists) {
+  // The cards come rendered from the server (recent_panel() in log_scan.php).
+  function renderRecent(html) {
     var container = document.getElementById('recent-disks');
-    if (!container || !lists) return;
-    var html = '';
-    Object.keys(lists).forEach(function (disk) {
-      var entries = lists[disk];
-      html += '<div class="recent-disk hf-bordered" data-disk="' + disk.replace(/</g, '&lt;') + '">';
-      html += '<div class="recent-disk-title">' + disk.replace(/</g, '&lt;') + '</div>';
-      html += '<table class="recent-table"><tbody>';
-      if (!entries.length) {
-        html += '<tr><td style="color:#888;">No activity yet.</td></tr>';
-      }
-      entries.forEach(function (e) {
-        var rel = e.path.indexOf(disk) === 0 ? e.path.slice(disk.length) : e.path;
-        var relEsc  = rel.replace(/</g, '&lt;');
-        var fullEsc = e.path.replace(/</g, '&lt;');
-        html += '<tr data-type="' + e.type + '"' + (e.type === 'skip' && skipCb && skipCb.checked ? ' style="display:none;"' : '') + '>';
-        html += '<td class="recent-path" data-full="' + relEsc + '" title="' + fullEsc + '">' + relEsc + '</td>';
-        if (e.type === 'access') {
-          html += '<td class="recent-col">' + e.reads + ' reads</td>';
-          html += '<td class="recent-col">' + (e.promoted ? 'Promoted' : 'Not yet') + '</td>';
-        } else {
-          html += '<td class="recent-col-skip" colspan="2">Skipped</td>';
-        }
-        html += '<td class="hf-time" title="' + e.timestamp + '">' + e.when + '</td>';
-        html += '</tr>';
-      });
-      html += '</tbody></table></div>';
-    });
+    if (!container) return;
     container.innerHTML = html;
     fitRecentPaths();
   }
 
+  // Skipped rows are hidden by a class on the container, so a re-render keeps it.
+  function applySkipClass() {
+    var container = document.getElementById('recent-disks');
+    if (container) container.classList.toggle('hf-hide-skip', !!(skipCb && skipCb.checked));
+  }
+  applySkipClass();
+
   function applySkipFilter() {
-    document.querySelectorAll('.recent-table tr[data-type="skip"]').forEach(function (tr) {
-      tr.style.display = (skipCb && skipCb.checked) ? 'none' : '';
-    });
+    applySkipClass();
     // The log line quota is now filled server-side (see log_tail_lines()), so
     // toggling the filter needs a fresh fetch, not just a re-render of what's
     // already on screen - otherwise a flooded tail can leave nothing to show.
@@ -915,7 +865,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     updateLog(rawLog);
     if (r.recent) {
       HF_RECENT = r.recent;
-      renderRecent(HF_RECENT.lists);
+      renderRecent(HF_RECENT.html);
     }
     if (r.stats)   applyFoldData('stats', r.stats);
     if (r.wakeups) applyFoldData('wakeups', r.wakeups);

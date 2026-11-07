@@ -209,7 +209,7 @@ if ($action === 'save') {
         } else {
             [$lists, $offset] = log_scan_full($log_file, $scan_paths);
         }
-        $recent = ['offset' => $offset, 'lists' => $lists];
+        $recent = ['offset' => $offset, 'lists' => $lists, 'html' => recent_panel($lists)];
     }
 
     echo json_encode([
