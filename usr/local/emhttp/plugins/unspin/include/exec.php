@@ -4,9 +4,6 @@
  * Called via jQuery $.post() from Unspin.php - bypasses dynamix page wrapper.
  */
 
-$cfg_file  = "/boot/config/plugins/unspin/unspin.cfg";
-$log_file  = "/var/log/unspin.log";
-$pid_file  = "/var/run/unspind.pid";
 $rc_script = "/etc/rc.d/rc.unspin";
 
 header('Content-Type: application/json');
@@ -28,9 +25,8 @@ $msg       = '';
 $saved_cfg = null;
 
 if ($action === 'save') {
-    $defaults_file = "/usr/local/emhttp/plugins/unspin/unspin.cfg.default";
-    $defs  = load_cfg($defaults_file);
-    $prev  = load_cfg($cfg_file);
+    $defs  = load_cfg(UNSPIN_DEFAULTS);
+    $prev  = load_cfg(UNSPIN_CFG);
     $p     = fn($k)           => $prev[$k] ?? $defs[$k] ?? '';
     $yn    = fn($k)           => in_array($_POST[$k] ?? '', ['yes','no'])                                             ? $_POST[$k] : $p($k);
     $enum  = fn($k, $vals)    => in_array($_POST[$k] ?? '', $vals)                                                    ? $_POST[$k] : $p($k);
@@ -61,19 +57,18 @@ if ($action === 'save') {
     // Scan Paths must be array disk mount points - reject the share mount and any
     // path sitting on a detected cache pool (checked here, not earlier, since it
     // needs $detected_pools).
-    foreach (array_map('trim', explode(',', $cfg['SCAN_PATHS'])) as $sp) {
-        if ($sp === '') continue;
+    foreach (scan_paths($cfg) as $sp) {
         if (strncmp($sp, '/mnt/user', 9) === 0) {
             echo json_encode(['ok' => false,
                 'message' => "Scan Paths must be array disk mount points (e.g. /mnt/disk1), not share paths ($sp). Use \"Detect Array Disks\" to auto-populate.",
-                'running' => daemon_running($pid_file)]);
+                'running' => daemon_running()]);
             exit;
         }
         foreach ($detected_pools as $pool) {
             if ($sp === "/mnt/$pool" || strncmp($sp, "/mnt/$pool/", strlen("/mnt/$pool/")) === 0) {
                 echo json_encode(['ok' => false,
                     'message' => "Scan Paths must be array disk mount points (e.g. /mnt/disk1), not the cache pool \"$pool\" ($sp).",
-                    'running' => daemon_running($pid_file)]);
+                    'running' => daemon_running()]);
                 exit;
             }
         }
@@ -114,7 +109,7 @@ if ($action === 'save') {
     $k = 'TRACK_WAKEUPS';             $cfg[$k] = $yn($k);
     $k = 'MOUNT_WAIT_TIMEOUT_MINS';   $cfg[$k] = $pint($k, 0);
     $k = 'MOUNT_RETRY_INTERVAL_SECS'; $cfg[$k] = $pint($k, 1);
-    save_cfg($cfg_file, $cfg);
+    save_cfg(UNSPIN_CFG, $cfg);
     $saved_cfg = $cfg;
 
     // Pool access times switched off: the settings page asked whether to undo
@@ -132,8 +127,7 @@ if ($action === 'save') {
 
     if (file_exists($rc_script)) {
         if ($cfg['SERVICE'] === 'enabled') {
-            if (daemon_running($pid_file)) {
-                $pid = (int)trim(file_get_contents($pid_file));
+            if ($pid = daemon_pid()) {
                 posix_kill($pid, SIGHUP); // reload config
             } else {
                 exec("$rc_script start < /dev/null > /dev/null 2>&1 &");
@@ -153,27 +147,19 @@ if ($action === 'save') {
     $msg = 'Daemon stopped.';
 
 } elseif ($action === 'clear_log') {
-    file_put_contents($log_file, '');
+    file_put_contents(UNSPIN_LOG, '');
     $msg = 'Log cleared.';
 
 } elseif ($action === 'reset_stats') {
-    // The daemon also holds the statistics in memory; the marker makes it drop
-    // them before its next write. Marker first, so a write in between can't
-    // bring the deleted file back for good.
-    touch('/var/run/unspind.stats-reset');
-    @unlink('/var/run/unspind.stats');
-    @unlink('/boot/config/plugins/unspin/stats');
+    reset_stats_file('stats');
     echo json_encode(['ok' => true, 'message' => 'Statistics reset.',
-                      'running' => daemon_running($pid_file), 'stats' => promotion_stats()]);
+                      'running' => daemon_running(), 'stats' => promotion_stats()]);
     exit;
 
 } elseif ($action === 'reset_wakeups') {
-    // Same order as reset_stats: marker first.
-    touch('/var/run/unspind.wakeups-reset');
-    @unlink('/var/run/unspind.wakeups');
-    @unlink('/boot/config/plugins/unspin/wakeups');
+    reset_stats_file('wakeups');
     echo json_encode(['ok' => true, 'message' => 'Wake-up statistics reset.',
-                      'running' => daemon_running($pid_file), 'wakeups' => disk_wakeups()]);
+                      'running' => daemon_running(), 'wakeups' => disk_wakeups()]);
     exit;
 
 } elseif ($action === 'detect_disks') {
@@ -182,39 +168,37 @@ if ($action === 'save') {
     ) ?? '');
     if ($paths !== '') {
         echo json_encode(['ok' => true,  'message' => "Detected: $paths",
-                          'paths' => $paths, 'running' => daemon_running($pid_file)]);
+                          'paths' => $paths, 'running' => daemon_running()]);
     } else {
         echo json_encode(['ok' => false, 'message' => 'No array disks found in /proc/mounts',
-                          'running' => daemon_running($pid_file)]);
+                          'running' => daemon_running()]);
     }
     exit;
 
 } elseif ($action === 'poll') {
     require_once __DIR__ . '/log_scan.php';
-    $poll_cfg     = load_cfg($cfg_file);
-    $log_tail_n   = (($poll_cfg['LOG_LEVEL'] ?? '') === 'debug') ? 1000 : 200;
+    $poll_cfg     = load_cfg(UNSPIN_CFG);
     $exclude_skip = ($_POST['exclude_skip'] ?? '') === '1';
-    $log_lines    = log_tail_lines($log_file, $log_tail_n, $exclude_skip ? '[skip share]' : null);
+    $log_lines    = log_tail_lines(UNSPIN_LOG, log_tail_count($poll_cfg), $exclude_skip ? '[skip share]' : null);
     $pause_locks = pause_reasons();
 
     $recent = null;
-    if (($poll_cfg['LOG_LEVEL'] ?? '') === 'debug') {
-        $scan_paths = array_values(array_filter(array_map('trim',
-            explode(',', $poll_cfg['SCAN_PATHS'] ?? ''))));
+    if (is_debug($poll_cfg)) {
+        $scan_paths = scan_paths($poll_cfg);
         $offset     = isset($_POST['log_offset']) ? (int)$_POST['log_offset'] : null;
         $prev_lists = isset($_POST['log_lists']) ? json_decode($_POST['log_lists'], true) : null;
 
         if ($offset !== null && is_array($prev_lists)) {
-            [$lists, $offset] = log_scan_incremental($log_file, $offset, $scan_paths, $prev_lists);
+            [$lists, $offset] = log_scan_incremental(UNSPIN_LOG, $offset, $scan_paths, $prev_lists);
         } else {
-            [$lists, $offset] = log_scan_full($log_file, $scan_paths);
+            [$lists, $offset] = log_scan_full(UNSPIN_LOG, $scan_paths);
         }
         $recent = ['offset' => $offset, 'lists' => $lists, 'html' => recent_panel($lists)];
     }
 
     echo json_encode([
         'ok'      => true,
-        'running' => daemon_running($pid_file),
+        'running' => daemon_running(),
         'paused'  => count($pause_locks) > 0,
         'pause_locks' => $pause_locks,
         'log'     => $log_lines,
@@ -229,5 +213,5 @@ if ($action === 'save') {
     $msg = 'Unknown action.';
 }
 
-echo json_encode(['ok' => $ok, 'message' => $msg, 'running' => daemon_running($pid_file),
+echo json_encode(['ok' => $ok, 'message' => $msg, 'running' => daemon_running(),
                   'cfg' => $saved_cfg]);

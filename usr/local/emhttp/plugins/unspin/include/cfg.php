@@ -3,6 +3,11 @@
  * Required by both Unspin.php (page render) and exec.php (POST handler).
  */
 
+const UNSPIN_CFG      = '/boot/config/plugins/unspin/unspin.cfg';
+const UNSPIN_DEFAULTS = '/usr/local/emhttp/plugins/unspin/unspin.cfg.default';
+const UNSPIN_LOG      = '/var/log/unspin.log';
+const UNSPIN_PID      = '/var/run/unspind.pid';
+
 function load_cfg($path) {
     $cfg = [];
     if (!file_exists($path)) return $cfg;
@@ -15,6 +20,47 @@ function load_cfg($path) {
         }
     }
     return $cfg;
+}
+
+// Debug logging also shows the Recently Accessed Files panels and a longer log
+function is_debug($cfg) {
+    return ($cfg['LOG_LEVEL'] ?? '') === 'debug';
+}
+
+// Lines of the log shown on the page
+function log_tail_count($cfg) {
+    return is_debug($cfg) ? 1000 : 200;
+}
+
+// The array disks Unspin watches, from the comma separated SCAN_PATHS setting
+function scan_paths($cfg) {
+    return array_values(array_filter(array_map('trim', explode(',', $cfg['SCAN_PATHS'] ?? ''))));
+}
+
+// Lines of a statistics file the daemon keeps (stats, wakeups): the current copy
+// in RAM, or the one on the flash (written hourly) after a reboot.
+function stats_lines($name) {
+    $ram = "/var/run/unspind.$name";
+    return @file(file_exists($ram) ? $ram : "/boot/config/plugins/unspin/$name", FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+}
+
+// Reset a statistics file. The daemon also holds the numbers in memory; the
+// marker makes it drop them before its next write. Marker first, so a write in
+// between can't bring the deleted file back for good.
+function reset_stats_file($name) {
+    touch("/var/run/unspind.$name-reset");
+    @unlink("/var/run/unspind.$name");
+    @unlink("/boot/config/plugins/unspin/$name");
+}
+
+// Days from $since (Y-m-d) to today, both included
+function days_since($since) {
+    return max(1, (int)round((strtotime(date('Y-m-d')) - strtotime($since)) / 86400) + 1);
+}
+
+// Header text of an open statistics section
+function averaged_over($per, $days) {
+    return "Per $per, averaged over " . number_format($days) . ($days == 1 ? ' day' : ' days');
 }
 
 function fmt_bytes($n) {
@@ -48,8 +94,7 @@ function promotion_stats() {
     $today = date('Y-m-d');
     $since = null;
     $pools = [];   // pool => [today files, today bytes, total files, total bytes]
-    $file  = file_exists('/var/run/unspind.stats') ? '/var/run/unspind.stats' : '/boot/config/plugins/unspin/stats';
-    foreach (@file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    foreach (stats_lines('stats') as $line) {
         $f = explode("\t", $line);
         if (count($f) !== 4) continue;
         [$date, $pool, $files, $bytes] = $f;
@@ -66,8 +111,8 @@ function promotion_stats() {
     $sum = [0, 0, 0, 0];
     foreach ($pools as $p) foreach ($p as $i => $v) $sum[$i] += $v;
 
-    $days  = max(1, (int)round((strtotime($today) - strtotime($since)) / 86400) + 1);
-    $cell  = fn($files, $bytes, $dec = 0) => number_format($files, $dec) . ' (' . fmt_bytes($bytes) . ')';
+    $days  = days_since($since);
+    $cell = fn($files, $bytes, $dec = 0) => number_format($files, $dec) . ' (' . fmt_bytes($bytes) . ')';
     $cells = function ($p) use ($cell, $days) {
         $avg = $p[2] / $days;
         return [$cell($p[0], $p[1]), $cell($avg, $p[3] / $days, $avg < 10 ? 1 : 0), $cell($p[2], $p[3])];
@@ -84,7 +129,7 @@ function promotion_stats() {
     if (count($pools) > 1) $detail .= $row('All pools', $sum, 'hf-stats-sum');
     $detail .= '</div>';
     return ['summary' => "Today $t · Avg $a · Total $s",
-            'open'    => 'Per pool, averaged over ' . number_format($days) . ($days == 1 ? ' day' : ' days'),
+            'open'    => averaged_over('pool', $days),
             'detail'  => $detail];
 }
 
@@ -99,8 +144,7 @@ function disk_wakeups() {
     $since  = null;
     $counts = [];   // disk => label => [today, total]
     $recent = [];
-    $file   = file_exists('/var/run/unspind.wakeups') ? '/var/run/unspind.wakeups' : '/boot/config/plugins/unspin/wakeups';
-    foreach (@file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    foreach (stats_lines('wakeups') as $line) {
         $f = explode("\t", $line);
         if ($f[0] === 'C' && count($f) === 5) {
             [, $date, $disk, $label, $n] = $f;
@@ -117,8 +161,8 @@ function disk_wakeups() {
     if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',
                           'detail' => '', 'panel' => '<div class="hf-wake-none">No wake-ups recorded yet.</div>'];
 
-    $days = max(1, (int)round((strtotime($today) - strtotime($since)) / 86400) + 1);
-    $avg  = fn($n) => number_format($n / $days, $n / $days < 10 ? 1 : 0);
+    $days = days_since($since);
+    $avg = fn($n) => number_format($n / $days, $n / $days < 10 ? 1 : 0);
     $sum  = [0, 0];
     foreach ($counts as $labels) foreach ($labels as $c) { $sum[0] += $c[0]; $sum[1] += $c[1]; }
 
@@ -156,7 +200,7 @@ function disk_wakeups() {
     $last = end($recent);
     return ['summary' => 'Today ' . $sum[0] . ' · Avg ' . $avg($sum[1]) . ' · Total ' . $sum[1] .
                          ($last ? ' · Last: ' . $last['name'] : ''),
-            'open'    => 'Per disk, averaged over ' . number_format($days) . ($days == 1 ? ' day' : ' days'),
+            'open'    => averaged_over('disk', $days),
             'detail'  => $detail,
             'panel'   => $panel];
 }
@@ -174,10 +218,14 @@ function pause_reasons() {
     return $reasons;
 }
 
-function daemon_running($pid_file) {
-    if (!file_exists($pid_file)) return false;
-    $pid = (int)trim(file_get_contents($pid_file));
-    return $pid > 0 && file_exists("/proc/$pid");
+// PID of the running daemon, or 0
+function daemon_pid() {
+    $pid = (int)@file_get_contents(UNSPIN_PID);
+    return $pid > 0 && file_exists("/proc/$pid") ? $pid : 0;
+}
+
+function daemon_running() {
+    return daemon_pid() > 0;
 }
 
 // Parse /boot/config/shares/*.cfg -> ['share' => ['use_cache'=>..,'cache_pool'=>..]].
@@ -186,17 +234,8 @@ function load_unraid_shares() {
     $dir = '/boot/config/shares';
     if (!is_dir($dir)) return $out;
     foreach (glob("$dir/*.cfg") as $path) {
-        $share = basename($path, '.cfg');
-        $info  = ['use_cache' => '', 'cache_pool' => ''];
-        foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-            $line = trim($line);
-            if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) continue;
-            [$k, $v] = explode('=', $line, 2);
-            $k = trim($k); $v = trim($v, " \t\"'");
-            if      ($k === 'shareUseCache')  $info['use_cache']  = $v;
-            else if ($k === 'shareCachePool') $info['cache_pool'] = $v;
-        }
-        $out[$share] = $info;
+        $c = load_cfg($path);
+        $out[basename($path, '.cfg')] = ['use_cache' => $c['shareUseCache'] ?? '', 'cache_pool' => $c['shareCachePool'] ?? ''];
     }
     ksort($out);
     return $out;

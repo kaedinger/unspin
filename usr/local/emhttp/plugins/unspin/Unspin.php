@@ -4,10 +4,6 @@
  * All POST actions are handled by include/exec.php via jQuery $.post().
  */
 
-$cfg_file = "/boot/config/plugins/unspin/unspin.cfg";
-$log_file = "/var/log/unspin.log";
-$pid_file = "/var/run/unspind.pid";
-
 require_once __DIR__ . '/include/cfg.php';
 
 // Insert a space between the numeric part and the unit (e.g. "500MB" → "500 MB")
@@ -39,10 +35,8 @@ function opt($val, $current, $label) {
     return "<option value=\"" . htmlspecialchars($val) . "\"$sel>" . htmlspecialchars($label) . "</option>";
 }
 
-
-$defaults_file = "/usr/local/emhttp/plugins/unspin/unspin.cfg.default";
-$defaults = load_cfg($defaults_file);
-$cfg      = load_cfg($cfg_file);
+$defaults = load_cfg(UNSPIN_DEFAULTS);
+$cfg      = load_cfg(UNSPIN_CFG);
 $c        = [...$defaults, ...$cfg];
 
 $plg_file = '/boot/config/plugins/unspin.plg';
@@ -53,21 +47,19 @@ if (file_exists($plg_file)) {
         $version = $m[1];
 }
 
-$is_running = daemon_running($pid_file);
+$is_running = daemon_running();
 $pause_locks = pause_reasons();
 $is_paused = count($pause_locks) > 0;
 $pause_label = $is_paused ? ' (Paused: ' . htmlspecialchars(implode(', ', $pause_locks)) . ')' : '';
 
 require_once __DIR__ . '/include/log_scan.php';
-$log_tail_n    = (($c['LOG_LEVEL'] ?? '') === 'debug') ? 1000 : 200;
-$log_lines_raw = log_tail_lines($log_file, $log_tail_n);
+$log_lines_raw = log_tail_lines(UNSPIN_LOG, log_tail_count($c));
 $log_lines     = htmlspecialchars($log_lines_raw);
 
 $recent_offset = 0;
 $recent_lists  = [];
-if (($c['LOG_LEVEL'] ?? '') === 'debug') {
-    $scan_paths = array_values(array_filter(array_map('trim', explode(',', $c['SCAN_PATHS'] ?? ''))));
-    [$recent_lists, $recent_offset] = log_scan_full($log_file, $scan_paths);
+if (is_debug($c)) {
+    [$recent_lists, $recent_offset] = log_scan_full(UNSPIN_LOG, scan_paths($c));
 }
 
 // Detected shares + excluded set for the Detected Shares table.
@@ -670,7 +662,7 @@ dt.hf-share-name {
   <div id="hf-wake-cards" class="hf-fold-wakepanel recent-disks-grid"><?= $wakeups['panel'] ?></div>
 </div>
 
-<div id="recent-panel" style="margin-bottom:12px;<?= ($c['LOG_LEVEL'] ?? '') === 'debug' ? '' : 'display:none;' ?>">
+<div id="recent-panel" style="margin-bottom:12px;<?= is_debug($c) ? '' : 'display:none;' ?>">
   <strong style="display:block;margin-bottom:10px;">5 Recently Accessed Files</strong>
   <div id="recent-disks" class="recent-disks-grid"><?= recent_panel($recent_lists) ?></div>
 </div>
