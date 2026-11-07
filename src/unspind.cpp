@@ -438,7 +438,12 @@ static void parse_cfg_into(const std::string& path,
     }
 }
 
+// Problems found by load_config(), logged by log_config(): the log isn't open
+// while the config loads, at startup and on a reload.
+static std::vector<std::string> _cfg_warnings;
+
 static void load_config() {
+    _cfg_warnings.clear();
     // Last-resort fallbacks - used only if unspin.cfg.default is missing.
     // These do not usually need to be kept in sync, only if you're bored
     std::unordered_map<std::string, std::string> raw = {
@@ -475,14 +480,26 @@ static void load_config() {
         auto it = raw.find(k);
         return (it != raw.end()) ? it->second : empty;
     };
+    // A value that isn't a number - a typo, or the file read by a reload while the
+    // settings page is still writing it - keeps the current setting instead of
+    // stopping the daemon.
+    auto bad = [&](const char* k, const std::string& cur) {
+        _cfg_warnings.push_back(std::string("Ignoring invalid setting ") + k + "=\"" + get(k) + "\", keeping " + cur);
+    };
+    auto num = [&](const char* k, auto cur) -> decltype(cur) {
+        try { return (decltype(cur))std::stol(get(k)); }
+        catch (...) { bad(k, std::to_string(cur)); return cur; }
+    };
 
     auto raw_scans = split_csv(get("SCAN_PATHS"));
 
     // Default fill % for pools without a per-pool override.
     // Legacy MAX_HOT_FILL_PERCENT, if present, provides the default (migration).
     _cfg.default_max_fill_percent = DEFAULT_MAX_FILL_PERCENT;
-    if (auto it = raw.find("MAX_HOT_FILL_PERCENT"); it != raw.end() && !it->second.empty())
-        _cfg.default_max_fill_percent = std::stod(it->second);
+    if (auto it = raw.find("MAX_HOT_FILL_PERCENT"); it != raw.end() && !it->second.empty()) {
+        try { _cfg.default_max_fill_percent = std::stod(it->second); }
+        catch (...) { bad("MAX_HOT_FILL_PERCENT", std::to_string((int)DEFAULT_MAX_FILL_PERCENT)); }
+    }
 
     // Collect per-pool fill limits: MAX_FILL_PERCENT_<pool>=<pct>
     std::unordered_map<std::string, double> per_pool_limits;
@@ -490,30 +507,31 @@ static void load_config() {
         const std::string prefix = "MAX_FILL_PERCENT_";
         if (k.rfind(prefix, 0) != 0 || k.size() <= prefix.size() || v.empty()) continue;
         try { per_pool_limits[k.substr(prefix.size())] = std::stod(v); }
-        catch (...) { log_warn("Ignoring malformed fill limit: " + k + "=" + v); }
+        catch (...) { _cfg_warnings.push_back("Ignoring malformed fill limit: " + k + "=" + v); }
     }
 
-    _cfg.small_file_threshold     = parse_size(get("SMALL_FILE_THRESHOLD"));
-    _cfg.small_min_accesses       = std::stoi(get("SMALL_MIN_ACCESSES"));
-    _cfg.large_short_min_accesses = std::stoi(get("LARGE_SHORT_MIN_ACCESSES"));
-    _cfg.large_short_window_mins  = std::stoi(get("LARGE_SHORT_WINDOW_MINS"));
-    _cfg.large_long_min_accesses  = std::stoi(get("LARGE_LONG_MIN_ACCESSES"));
-    _cfg.large_long_window_hours  = std::stoi(get("LARGE_LONG_WINDOW_HOURS"));
+    try { _cfg.small_file_threshold = parse_size(get("SMALL_FILE_THRESHOLD")); }
+    catch (...) { bad("SMALL_FILE_THRESHOLD", human_size(_cfg.small_file_threshold)); }
+    _cfg.small_min_accesses       = num("SMALL_MIN_ACCESSES",       _cfg.small_min_accesses);
+    _cfg.large_short_min_accesses = num("LARGE_SHORT_MIN_ACCESSES", _cfg.large_short_min_accesses);
+    _cfg.large_short_window_mins  = num("LARGE_SHORT_WINDOW_MINS",  _cfg.large_short_window_mins);
+    _cfg.large_long_min_accesses  = num("LARGE_LONG_MIN_ACCESSES",  _cfg.large_long_min_accesses);
+    _cfg.large_long_window_hours  = num("LARGE_LONG_WINDOW_HOURS",  _cfg.large_long_window_hours);
     _cfg.dry_run                  = (get("DRY_RUN")            == "yes");
     _cfg.debug                    = (get("LOG_LEVEL")          == "debug");
     _cfg.rule1_enabled            = (get("RULE1_ENABLED")      != "no");
     _cfg.rule1_fallthrough        = (get("RULE1_FALLTHROUGH")  == "yes");
     _cfg.rule2_enabled            = (get("RULE2_ENABLED")      != "no");
     _cfg.rule3_enabled            = (get("RULE3_ENABLED")      != "no");
-    _cfg.rule3_min_reads          = std::max(0, std::stoi(get("RULE3_MIN_READS")));
+    _cfg.rule3_min_reads          = std::max(0, num("RULE3_MIN_READS", _cfg.rule3_min_reads));
     _cfg.pause_on_rsync           = (get("PAUSE_ON_RSYNC")     != "no");
     _cfg.enable_pool_atime        = (get("ENABLE_POOL_ATIME")  == "yes");
     _cfg.log_file                 = get("LOG_FILE");
-    _cfg.log_max_size_mb          = std::stol(get("LOG_MAX_SIZE_MB"));
-    _cfg.log_trim_size_mb         = std::stol(get("LOG_TRIM_SIZE_MB"));
+    _cfg.log_max_size_mb          = num("LOG_MAX_SIZE_MB",  _cfg.log_max_size_mb);
+    _cfg.log_trim_size_mb         = num("LOG_TRIM_SIZE_MB", _cfg.log_trim_size_mb);
     _cfg.log_excluded_shares      = (get("LOG_EXCLUDED_SHARES") == "yes");
-    _cfg.mount_wait_timeout_mins  = std::max(0, std::stoi(get("MOUNT_WAIT_TIMEOUT_MINS")));
-    _cfg.mount_retry_interval_secs= std::max(1, std::stoi(get("MOUNT_RETRY_INTERVAL_SECS")));
+    _cfg.mount_wait_timeout_mins  = std::max(0, num("MOUNT_WAIT_TIMEOUT_MINS",   _cfg.mount_wait_timeout_mins));
+    _cfg.mount_retry_interval_secs= std::max(1, num("MOUNT_RETRY_INTERVAL_SECS", _cfg.mount_retry_interval_secs));
     _cfg.exclude_patterns         = split_csv(get("EXCLUDE_PATTERNS"));
 
     load_share_settings();
@@ -532,7 +550,7 @@ static void load_config() {
     _cfg.scan_paths.clear();
     for (const auto& sp : raw_scans) {
         if (sp.rfind(SHARE_MNT, 0) == 0) {
-            log_warn("Ignoring scan path '" + sp + "': " + SHARE_MNT + " is the share mount - "
+            _cfg_warnings.push_back("Ignoring scan path '" + sp + "': " + SHARE_MNT + " is the share mount - "
                      "use array disk mount points (e.g. " + MNT_PREFIX + "disk1) instead");
             continue;
         }
@@ -540,7 +558,7 @@ static void load_config() {
             auto end = sp.find('/', MNT_PREFIX.size());
             auto top = sp.substr(MNT_PREFIX.size(), end == std::string::npos ? std::string::npos : end - MNT_PREFIX.size());
             if (_pools.count(top)) {
-                log_warn("Ignoring scan path '" + sp + "': " + MNT_PREFIX + top + " is a cache pool, not an array disk - "
+                _cfg_warnings.push_back("Ignoring scan path '" + sp + "': " + MNT_PREFIX + top + " is a cache pool, not an array disk - "
                          "use array disk mount points (e.g. " + MNT_PREFIX + "disk1) instead");
                 continue;
             }
@@ -551,6 +569,7 @@ static void load_config() {
 
 static void log_config() {
     log_info("Config: " + _cfg_file);
+    for (const auto& w : _cfg_warnings) log_warn(w);
     for (const auto& sp : _cfg.scan_paths)
         log_info("Scan path: " + sp);
     for (const auto& [pool, info] : _pools)
@@ -666,10 +685,24 @@ static double disk_fill_percent(const std::string& path) {
     return total > 0 ? 100.0 * used / total : 100.0;
 }
 
+// A whole file, or as much of it as could be read ("" if it can't be opened).
+// Plain read(), not an ifstream: a /proc file whose process ends while it's
+// being read fails with ESRCH, and libstdc++ throws on that instead of just
+// stopping - which ended the daemon.
+static std::string read_file(const std::string& path) {
+    std::string s;
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return s;
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf))) > 0) s.append(buf, (size_t)n);
+    close(fd);
+    return s;
+}
+
 // A process's command line with the NUL separators turned into spaces ("" if gone).
 static std::string proc_cmdline(const std::string& pid) {
-    std::ifstream f("/proc/" + pid + "/cmdline", std::ios::binary);
-    std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    auto s = read_file("/proc/" + pid + "/cmdline");
     std::replace(s.begin(), s.end(), '\0', ' ');
     return s;
 }

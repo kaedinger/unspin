@@ -19,6 +19,10 @@
 >
 
 <CHANGES>
+### next
+- fix: unspind could crash when a program ended at the very moment it was checked for the Mover
+- fix: an invalid number in the settings no longer stops unspind on a reload; the previous value is kept and a warning logged
+
 ### 2026.11.05.60628
 - feat: promotion statistics on the settings page - files and size moved to the cache pools today, average per day and in total. One summary line (summed over all pools) that folds out to a table per pool, with a reset button. Kept in RAM and saved to /boot/config/plugins/unspin/stats at most once an hour and when the daemon stops
 - feat: the Detected Shares list folds into one summary line with share counts; click it to show the shares. Both foldable sections remember their state per browser
