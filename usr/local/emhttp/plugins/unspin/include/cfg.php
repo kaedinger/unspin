@@ -30,6 +30,13 @@ function fmt_when($epoch) {
     return date(date('Y-m-d', $epoch) === date('Y-m-d') ? 'H:i:s' : 'M j H:i:s', $epoch);
 }
 
+// One card of the per-disk panels (Latest Disk Wake-ups, Recently Accessed Files):
+// the disk as title, an optional line under it (HTML), and the table rows (HTML).
+function disk_card($disk, $rows, $sub = '') {
+    return '<div class="recent-disk hf-bordered"><div class="recent-disk-title">' . htmlspecialchars($disk) . '</div>' .
+           $sub . '<table class="recent-table"><tbody>' . $rows . '</tbody></table></div>';
+}
+
 // Promotion statistics from the daemon's stats file (one "date\tpool\tfiles\tbytes"
 // line per day and pool with promotions) - the current copy in RAM, or the one on
 // the flash (written hourly) after a reboot: a one-line summary (plain text) shown
@@ -132,19 +139,17 @@ function disk_wakeups() {
 
         $causes = [];
         foreach ($labels as $label => $c) $causes[] = $e($label) . ' ' . $c[1];
-        $panel .= '<div class="recent-disk hf-bordered"><div class="recent-disk-title">' . $e($disk) . '</div>' .
-                  '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
-                  implode(' &middot; ', $causes) . '</div><table class="recent-table"><tbody>';
+        $rows = '';
         foreach (array_slice($by_disk[$disk] ?? [], 0, 5) as $w) {
-            $when = fmt_when($w['at']);
-            $what = $w['path'] !== '' ? $w['access'] . ' ' . basename($w['path']) : '';
-            $tip  = trim($w['path'] . ($w['also'] !== '' ? "\nAlso active: " . $w['also'] : ''));
-            $panel .= '<tr title="' . $e($tip) . '">' .
-                      '<td class="hf-wake-cause" data-full="' . $e($w['label']) . '">' . $e($w['label']) . '</td>' .
-                      '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
-                      '<td class="hf-time">' . $e($when) . '</td></tr>';
+            $what  = $w['path'] !== '' ? $w['access'] . ' ' . basename($w['path']) : '';
+            $tip   = trim($w['path'] . ($w['also'] !== '' ? "\nAlso active: " . $w['also'] : ''));
+            $rows .= '<tr title="' . $e($tip) . '">' .
+                     '<td class="hf-wake-cause" data-full="' . $e($w['label']) . '">' . $e($w['label']) . '</td>' .
+                     '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
+                     '<td class="hf-time">' . $e(fmt_when($w['at'])) . '</td></tr>';
         }
-        $panel .= '</tbody></table></div>';
+        $panel .= disk_card($disk, $rows, '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
+                                          implode(' &middot; ', $causes) . '</div>');
     }
     $detail .= '</div>';
 

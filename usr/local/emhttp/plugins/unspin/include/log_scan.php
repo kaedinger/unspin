@@ -102,20 +102,18 @@ function recent_panel($lists) {
     $e    = fn($s) => htmlspecialchars($s);
     $html = '';
     foreach ($lists as $disk => $entries) {
-        $html .= '<div class="recent-disk hf-bordered" data-disk="' . $e($disk) . '">' .
-                 '<div class="recent-disk-title">' . $e($disk) . '</div><table class="recent-table"><tbody>';
-        if (!$entries) $html .= '<tr><td style="color:#888;">No activity yet.</td></tr>';
+        $rows = $entries ? '' : '<tr><td style="color:#888;">No activity yet.</td></tr>';
         foreach ($entries as $x) {
             $rel   = substr($x['path'], strlen($disk));
-            $html .= '<tr data-type="' . $e($x['type']) . '">' .
+            $rows .= '<tr data-type="' . $e($x['type']) . '">' .
                      '<td class="recent-path" data-full="' . $e($rel) . '" title="' . $e($x['path']) . '">' . $e($rel) . '</td>';
-            $html .= $x['type'] === 'access'
+            $rows .= $x['type'] === 'access'
                 ? '<td class="recent-col">' . (int)$x['reads'] . ' reads</td>' .
                   '<td class="recent-col">' . ($x['promoted'] ? 'Promoted' : 'Not yet') . '</td>'
                 : '<td class="recent-col-skip" colspan="2">Skipped</td>';
-            $html .= '<td class="hf-time" title="' . $e($x['timestamp']) . '">' . $e(fmt_when(strtotime($x['timestamp']))) . '</td></tr>';
+            $rows .= '<td class="hf-time" title="' . $e($x['timestamp']) . '">' . $e(fmt_when(strtotime($x['timestamp']))) . '</td></tr>';
         }
-        $html .= '</tbody></table></div>';
+        $html .= disk_card($disk, $rows);
     }
     return $html;
 }
