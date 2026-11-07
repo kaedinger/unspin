@@ -1471,8 +1471,7 @@ static std::string container_name(pid_t pid) {
     if (id.empty()) return "";
     auto it = _container_names.find(id);
     if (it != _container_names.end()) return it->second;
-    std::ifstream cfg("/var/lib/docker/containers/" + id + "/config.v2.json");
-    std::string json((std::istreambuf_iterator<char>(cfg)), std::istreambuf_iterator<char>());
+    auto json = read_file("/var/lib/docker/containers/" + id + "/config.v2.json");
     std::string name = id.substr(0, 12);
     auto n = json.find("\"Name\":\"/");     // container names start with a slash
     if (n != std::string::npos) {
