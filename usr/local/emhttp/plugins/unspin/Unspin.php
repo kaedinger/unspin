@@ -91,6 +91,20 @@ $legacy_fill = is_numeric($legacy_fill) ? intval($legacy_fill) : 80;
 }
 @keyframes hf-spin { to { transform: rotate(360deg); } }
 
+/* Width of the settings column, as Unraid's form elements */
+:root { --hf-col: 400px; }
+
+/* Text kept on one line and cut at the edge; with an ellipsis where the script
+   doesn't shorten it in the middle itself (fitMiddleEllipsis) */
+.hf-fold-line, .hf-wake-label, .hf-wake-causes, .hf-pool-mnt, .recent-path, .hf-wake-cause {
+  white-space: nowrap;
+  overflow: hidden;
+}
+.hf-fold-line, .hf-wake-label, .hf-wake-causes, .hf-pool-mnt { text-overflow: ellipsis; }
+
+/* Secondary text: times, empty-panel notes, hints */
+.hf-muted, .hf-time, .hf-wake-none { color: #888; }
+
 /* Clickable help labels */
 dt.hf-has-help {
   cursor: help;
@@ -101,7 +115,7 @@ dt.hf-has-help {
 .hf-help {
   overflow: hidden;
   max-height: 0;
-  max-width: 400px;
+  max-width: var(--hf-col);
   opacity: 0;
   transition: max-height 0.25s ease, opacity 0.2s ease,
               padding 0.2s ease, margin-top 0.2s ease, border-color 0.2s ease;
@@ -123,9 +137,8 @@ dt.hf-has-help {
   border-color: #ccc;
 }
 
-/* Match Unraid's standard form element width */
 #hf-toggle-btn, #hf-apply-btn {
-  width: 400px !important;
+  width: var(--hf-col) !important;
 }
 
 /* Rule section header labels */
@@ -212,15 +225,11 @@ dt.hf-share-name {
 .recent-table tr:nth-child(even) {
   background: rgba(128,128,128,0.08);
 }
-.recent-path {
-  font-family: monospace;
-  white-space: nowrap;
-  overflow: hidden;
-}
+.recent-path { font-family: monospace; }
 .recent-col { width: 70px; white-space: nowrap; }
 .recent-col-skip { width: 140px; white-space: nowrap; }
 #recent-disks.hf-hide-skip tr[data-type="skip"] { display: none; }
-.hf-time { width: 100px; white-space: nowrap; color: #888; text-align: right; }
+.hf-time { width: 100px; white-space: nowrap; text-align: right; }
 
 .recent-disks-grid {
   display: grid;
@@ -233,13 +242,10 @@ dt.hf-share-name {
 
 /* Summary line of a foldable section (promotion statistics, detected shares) */
 .hf-fold-line {
-  width: 400px;
+  width: var(--hf-col);
   max-width: 100%;
   cursor: pointer;
   user-select: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Promotion statistics */
@@ -247,7 +253,7 @@ dt.hf-share-name {
   display: grid;
   grid-template-columns: repeat(4, auto);
   justify-content: space-between;
-  width: 400px;
+  width: var(--hf-col);
   max-width: 100%;
   column-gap: 16px;
   row-gap: 2px;
@@ -260,15 +266,13 @@ dt.hf-share-name {
 /* Disk wake-ups: a long cause (an SMB user@client) is cut, not widening the grid */
 .hf-wake-grid { grid-template-columns: auto auto auto auto minmax(0, 1fr); }
 .hf-wake-grid > span:nth-child(5) { opacity: 0.7; }
-.hf-wake-label { overflow: hidden; text-overflow: ellipsis; }
-.hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hf-wake-cause { width: 30%; white-space: nowrap; overflow: hidden; }
+.hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 6px; }
+.hf-wake-cause { width: 30%; }
 #hf-wake-cards .recent-path { padding-left: 8px; }
-.hf-wake-none { color: #888; }
 
 /* Pool Fill Limits row, kept within the settings column */
-.hf-pool-row { width: 400px; max-width: 100%; margin-bottom: 4px; }
-.hf-pool-mnt { flex: 0 0 9em; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hf-pool-row { width: var(--hf-col); max-width: 100%; margin-bottom: 4px; }
+.hf-pool-mnt { flex: 0 0 9em; font-family: monospace; }
 .hf-pool-size { margin-left: auto; opacity: 0.7; white-space: nowrap; }
 </style>
 
@@ -669,7 +673,7 @@ dt.hf-share-name {
 
 <label style="display:block;margin-bottom:8px;">
   <input type="checkbox" id="hf-exclude-skipped"> Exclude skipped shares
-  <span style="color:#888;font-size:0.85em;margin-left:6px;">(filters this view only - won't show anything unless "Include excluded shares in Debug log" above is also set to Yes)</span>
+  <span class="hf-muted" style="font-size:0.85em;margin-left:6px;">(filters this view only - won't show anything unless "Include excluded shares in Debug log" above is also set to Yes)</span>
 </label>
 
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">

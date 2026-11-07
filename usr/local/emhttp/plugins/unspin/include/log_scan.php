@@ -102,7 +102,7 @@ function recent_panel($lists) {
     $e    = fn($s) => htmlspecialchars($s);
     $html = '';
     foreach ($lists as $disk => $entries) {
-        $rows = $entries ? '' : '<tr><td style="color:#888;">No activity yet.</td></tr>';
+        $rows = $entries ? '' : '<tr><td class="hf-muted">No activity yet.</td></tr>';
         foreach ($entries as $x) {
             $rel   = substr($x['path'], strlen($disk));
             $rows .= '<tr data-type="' . $e($x['type']) . '">' .
