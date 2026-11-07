@@ -268,6 +268,19 @@ dt.hf-share-name {
 .hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 8px; }
 .hf-wake-cause { width: 30%; }
 #hf-wake-cards .recent-path { padding-left: 8px; }
+.hf-spin {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 1px solid #888;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+.hf-spin.on { background: #4ade80; border-color: #4ade80; }
 
 /* Pool Fill Limits row, kept within the settings column */
 .hf-pool-row { width: var(--hf-col); max-width: 100%; margin-bottom: 4px; }
@@ -312,7 +325,7 @@ dt.hf-share-name {
       <div id="hf-wakeups-table"><?= $wakeups['detail'] ?></div>
       <input type="button" value="Reset Wake-ups" onclick="hfResetWakeups()">
     </div>
-    <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups; hover over one for the full path. A read served from RAM doesn't wake a disk and isn't counted.
+    <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't wake a disk and isn't counted.
       <br><em>Accessing</em>: the disk woke for a directory listing or a file check, which opens no file; the program shown was found waiting for the disk.
       <br><em>No file opened</em>: the same, but no waiting program was found, for example because it runs inside a container. The <em>Dynamix Cache Directories</em> plugin prevents most of these.
       <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.

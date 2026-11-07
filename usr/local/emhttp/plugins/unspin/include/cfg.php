@@ -82,10 +82,24 @@ function fmt_when($epoch) {
 }
 
 // One card of the per-disk panels (Latest Disk Wake-ups, Recently Accessed Files):
-// the disk as title, an optional line under it (HTML), and the table rows (HTML).
-function disk_card($disk, $rows, $sub = '') {
-    return '<div class="recent-disk hf-bordered"><div class="recent-disk-title">' . htmlspecialchars($disk) . '</div>' .
+// the disk as title, optionally after a mark (HTML), an optional line under it
+// (HTML), and the table rows (HTML).
+function disk_card($disk, $rows, $sub = '', $mark = '') {
+    return '<div class="recent-disk hf-bordered"><div class="recent-disk-title">' . $mark . htmlspecialchars($disk) . '</div>' .
            $sub . '<table class="recent-table"><tbody>' . $rows . '</tbody></table></div>';
+}
+
+// Current spin state of the array disks from Unraid's disks.ini: name => spinning
+function disks_spinning() {
+    $out = [];
+    foreach (@parse_ini_file('/var/local/emhttp/disks.ini', true) ?: [] as $d)
+        if (isset($d['name'], $d['spundown'])) $out[$d['name']] = $d['spundown'] !== '1';
+    return $out;
+}
+
+// Dot before a disk name: green while spinning, an empty circle while spun down
+function spin_mark($spinning) {
+    return $spinning ? '<span class="hf-spin on" title="Spinning"></span>' : '<span class="hf-spin" title="Spun down"></span>';
 }
 
 // Promotion statistics from the daemon's stats file (one "date\tpool\tfiles\tbytes"
@@ -172,6 +186,7 @@ function disk_wakeups() {
     // that still have some. An empty card keeps the causes line for the layout.
     $disks = array_unique(array_merge(array_map('basename', scan_paths(settings())), array_keys($counts)));
     usort($disks, 'strnatcmp');
+    $spin  = disks_spinning();
     $panel = '';
     foreach ($disks as $disk) {
         $labels = $counts[$disk] ?? [];
@@ -189,7 +204,8 @@ function disk_wakeups() {
         }
         if ($rows === '') $rows = '<tr><td class="hf-muted">No wake-ups recorded yet.</td></tr>';
         $panel .= disk_card($disk, $rows, '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
-                                          ($causes ? implode(' &middot; ', $causes) : '&nbsp;') . '</div>');
+                                          ($causes ? implode(' &middot; ', $causes) : '&nbsp;') . '</div>',
+                            isset($spin[$disk]) ? spin_mark($spin[$disk]) : '');
     }
 
     if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',
