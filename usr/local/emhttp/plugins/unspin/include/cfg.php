@@ -22,6 +22,11 @@ function load_cfg($path) {
     return $cfg;
 }
 
+// The settings in effect: the saved ones over the defaults
+function settings() {
+    return [...load_cfg(UNSPIN_DEFAULTS), ...load_cfg(UNSPIN_CFG)];
+}
+
 // Debug logging also shows the Recently Accessed Files panels and a longer log
 function is_debug($cfg) {
     return ($cfg['LOG_LEVEL'] ?? '') === 'debug';
@@ -158,29 +163,19 @@ function disk_wakeups() {
                          'access' => $f[5], 'path' => $f[6], 'also' => $f[7]];
         }
     }
-    if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',
-                          'detail' => '', 'panel' => '<div class="hf-wake-none">No wake-ups recorded yet.</div>'];
-
-    $days = days_since($since);
-    $avg = fn($n) => number_format($n / $days, $n / $days < 10 ? 1 : 0);
-    $sum  = [0, 0];
-    foreach ($counts as $labels) foreach ($labels as $c) { $sum[0] += $c[0]; $sum[1] += $c[1]; }
-
     $e = fn($s) => htmlspecialchars($s);
     uksort($counts, 'strnatcmp');
     $by_disk = [];
     foreach (array_reverse($recent) as $w) $by_disk[$w['disk']][] = $w;   // newest first
 
-    $detail = '<div class="hf-stats-grid hf-wake-grid"><span></span><span>Today</span><span>Avg/day</span>' .
-              '<span>Total</span><span>Top cause</span>';
-    $panel  = '';
-    foreach ($counts as $disk => $labels) {
+    // One card per watched disk, wake-ups or not, plus disks no longer watched
+    // that still have some. An empty card keeps the causes line for the layout.
+    $disks = array_unique(array_merge(array_map('basename', scan_paths(settings())), array_keys($counts)));
+    usort($disks, 'strnatcmp');
+    $panel = '';
+    foreach ($disks as $disk) {
+        $labels = $counts[$disk] ?? [];
         uasort($labels, fn($a, $b) => $b[1] <=> $a[1]);
-        $top = array_key_first($labels);
-        $dt  = [array_sum(array_column($labels, 0)), array_sum(array_column($labels, 1))];
-        $detail .= '<span>' . $e($disk) . '</span><span>' . $dt[0] . '</span><span>' . $avg($dt[1]) .
-                   '</span><span>' . $dt[1] . '</span><span class="hf-wake-label" title="' . $e($top) . '">' . $e($top) . '</span>';
-
         $causes = [];
         foreach ($labels as $label => $c) $causes[] = $e($label) . ' ' . $c[1];
         $rows = '';
@@ -192,8 +187,27 @@ function disk_wakeups() {
                      '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
                      '<td class="hf-time">' . $e(fmt_when($w['at'])) . '</td></tr>';
         }
+        if ($rows === '') $rows = '<tr><td class="hf-muted">No wake-ups recorded yet.</td></tr>';
         $panel .= disk_card($disk, $rows, '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
-                                          implode(' &middot; ', $causes) . '</div>');
+                                          ($causes ? implode(' &middot; ', $causes) : '&nbsp;') . '</div>');
+    }
+
+    if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',
+                          'detail' => '', 'panel' => $panel];
+
+    $days = days_since($since);
+    $avg = fn($n) => number_format($n / $days, $n / $days < 10 ? 1 : 0);
+    $sum  = [0, 0];
+    foreach ($counts as $labels) foreach ($labels as $c) { $sum[0] += $c[0]; $sum[1] += $c[1]; }
+
+    $detail = '<div class="hf-stats-grid hf-wake-grid"><span></span><span>Today</span><span>Avg/day</span>' .
+              '<span>Total</span><span>Top cause</span>';
+    foreach ($counts as $disk => $labels) {
+        uasort($labels, fn($a, $b) => $b[1] <=> $a[1]);
+        $top = array_key_first($labels);
+        $dt  = [array_sum(array_column($labels, 0)), array_sum(array_column($labels, 1))];
+        $detail .= '<span>' . $e($disk) . '</span><span>' . $dt[0] . '</span><span>' . $avg($dt[1]) .
+                   '</span><span>' . $dt[1] . '</span><span class="hf-wake-label" title="' . $e($top) . '">' . $e($top) . '</span>';
     }
     $detail .= '</div>';
 

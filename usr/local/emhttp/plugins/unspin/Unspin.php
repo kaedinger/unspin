@@ -36,8 +36,7 @@ function opt($val, $current, $label) {
 }
 
 $defaults = load_cfg(UNSPIN_DEFAULTS);
-$cfg      = load_cfg(UNSPIN_CFG);
-$c        = [...$defaults, ...$cfg];
+$c        = settings();
 
 $plg_file = '/boot/config/plugins/unspin.plg';
 $version  = 'unknown';
@@ -103,7 +102,7 @@ $legacy_fill = is_numeric($legacy_fill) ? intval($legacy_fill) : 80;
 .hf-fold-line, .hf-wake-label, .hf-wake-causes, .hf-pool-mnt { text-overflow: ellipsis; }
 
 /* Secondary text: times, empty-panel notes, hints */
-.hf-muted, .hf-time, .hf-wake-none { color: #888; }
+.hf-muted, .hf-time { color: #888; }
 
 /* Clickable help labels */
 dt.hf-has-help {
@@ -266,7 +265,7 @@ dt.hf-share-name {
 /* Disk wake-ups: a long cause (an SMB user@client) is cut, not widening the grid */
 .hf-wake-grid { grid-template-columns: auto auto auto auto minmax(0, 1fr); }
 .hf-wake-grid > span:nth-child(5) { opacity: 0.7; }
-.hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 6px; }
+.hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 8px; }
 .hf-wake-cause { width: 30%; }
 #hf-wake-cards .recent-path { padding-left: 8px; }
 
