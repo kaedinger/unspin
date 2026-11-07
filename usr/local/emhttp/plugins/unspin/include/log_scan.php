@@ -72,6 +72,9 @@ function log_scan_classify($line, $scan_paths) {
     if (!$match) return null;
     [$disk, $path] = $match;
     $timestamp = substr($line, 0, 19);
+    // Shown time, same as the Disk Wake-ups cards: time only today, else with the date
+    $when = substr($timestamp, 0, 10) === date('Y-m-d') ? substr($timestamp, 11, 5)
+                                                       : date('M j H:i', strtotime($timestamp));
 
     if (preg_match('/ reads=(\d+) promoted=(yes|no)$/', $line, $m)) {
         return [$disk, [
@@ -80,6 +83,7 @@ function log_scan_classify($line, $scan_paths) {
             'reads'     => (int)$m[1],
             'promoted'  => $m[2] === 'yes',
             'timestamp' => $timestamp,
+            'when'      => $when,
         ]];
     }
     if (strpos($line, '[skip share] ') !== false) {
@@ -87,6 +91,7 @@ function log_scan_classify($line, $scan_paths) {
             'type'      => 'skip',
             'path'      => $path,
             'timestamp' => $timestamp,
+            'when'      => $when,
         ]];
     }
     return null;

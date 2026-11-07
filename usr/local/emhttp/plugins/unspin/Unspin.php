@@ -233,7 +233,7 @@ dt.hf-share-name {
 }
 .recent-col { width: 70px; white-space: nowrap; }
 .recent-col-skip { width: 140px; white-space: nowrap; }
-.recent-col-time { width: 62px; white-space: nowrap; color: #888; }
+.recent-col-time { width: 80px; white-space: nowrap; color: #888; text-align: right; }
 
 .recent-disks-grid {
   display: grid;
@@ -693,7 +693,7 @@ dt.hf-share-name {
 <?php else: ?>
             <td class="recent-col-skip" colspan="2">Skipped</td>
 <?php endif; ?>
-            <td class="recent-col-time" title="<?= htmlspecialchars($e['timestamp']) ?>"><?= htmlspecialchars(substr($e['timestamp'], 11)) ?></td>
+            <td class="recent-col-time" title="<?= htmlspecialchars($e['timestamp']) ?>"><?= htmlspecialchars($e['when']) ?></td>
           </tr>
 <?php endforeach; ?>
 <?php if (empty($entries)): ?>
@@ -812,7 +812,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
         } else {
           html += '<td class="recent-col-skip" colspan="2">Skipped</td>';
         }
-        html += '<td class="recent-col-time" title="' + e.timestamp + '">' + e.timestamp.slice(11) + '</td>';
+        html += '<td class="recent-col-time" title="' + e.timestamp + '">' + e.when + '</td>';
         html += '</tr>';
       });
       html += '</tbody></table></div>';
