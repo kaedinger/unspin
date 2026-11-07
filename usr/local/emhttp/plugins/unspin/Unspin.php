@@ -777,10 +777,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     // The log line quota is now filled server-side (see log_tail_lines()), so
     // toggling the filter needs a fresh fetch, not just a re-render of what's
     // already on screen - otherwise a flooded tail can leave nothing to show.
-    hfPost(pollData(), function (r) {
-      updateStatus(r.running, r.paused, r.pause_locks);
-      applyPollResult(r);
-    });
+    hfPoll();
   }
 
   if (skipCb) skipCb.addEventListener('change', applySkipFilter);
@@ -855,6 +852,25 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   function pollData() {
     return { action: 'poll', log_offset: HF_RECENT.offset, log_lists: JSON.stringify(HF_RECENT.lists),
              exclude_skip: (skipCb && skipCb.checked) ? '1' : '0' };
+  }
+
+  // Fetch the current state and refresh the status, the log and the panels.
+  function hfPoll() {
+    hfPost(pollData(), function (r) {
+      updateStatus(r.running, r.paused, r.pause_locks);
+      applyPollResult(r);
+    });
+  }
+
+  // A yes/no question in Unraid's dialog, or the browser's if it's missing;
+  // fallbackText replaces the text there, for labels other than OK/Cancel.
+  function hfConfirm(title, text, okLabel, cancelLabel, cb, fallbackText) {
+    if (typeof swal === 'function') {
+      swal({ title: title, text: text, type: 'warning', showCancelButton: true,
+             confirmButtonText: okLabel, cancelButtonText: cancelLabel }, cb);
+    } else {
+      cb(confirm(fallbackText || text));
+    }
   }
 
   // Shared handling for every poll response: refresh the log (the server already
@@ -939,38 +955,22 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   }
   updateSharesSummary();
 
+  // Reset button of a statistics section: action reset_NAME answers with the
+  // section's new data under NAME.
+  function hfResetFold(name, title, text) {
+    hfConfirm(title, text, 'Reset', 'Cancel', function (ok) {
+      if (!ok) return;
+      hfPost({ action: 'reset_' + name }, function (r) {
+        showMsg(r.message, r.ok);
+        if (r[name]) applyFoldData(name, r[name]);
+      });
+    });
+  }
   window.hfResetStats = function () {
-    var text = 'Reset the promotion statistics for all pools? This cannot be undone.';
-    var reset = function () {
-      hfPost({ action: 'reset_stats' }, function (r) {
-        showMsg(r.message, r.ok);
-        if (r.stats) applyFoldData('stats', r.stats);
-      });
-    };
-    if (typeof swal === 'function') {
-      swal({ title: 'Reset Statistics', text: text, type: 'warning', showCancelButton: true,
-             confirmButtonText: 'Reset', cancelButtonText: 'Cancel' },
-           function (ok) { if (ok) reset(); });
-    } else if (confirm(text)) {
-      reset();
-    }
+    hfResetFold('stats', 'Reset Statistics', 'Reset the promotion statistics for all pools? This cannot be undone.');
   };
-
   window.hfResetWakeups = function () {
-    var text = 'Reset the disk wake-up statistics for all disks? This cannot be undone.';
-    var reset = function () {
-      hfPost({ action: 'reset_wakeups' }, function (r) {
-        showMsg(r.message, r.ok);
-        if (r.wakeups) applyFoldData('wakeups', r.wakeups);
-      });
-    };
-    if (typeof swal === 'function') {
-      swal({ title: 'Reset Wake-ups', text: text, type: 'warning', showCancelButton: true,
-             confirmButtonText: 'Reset', cancelButtonText: 'Cancel' },
-           function (ok) { if (ok) reset(); });
-    } else if (confirm(text)) {
-      reset();
-    }
+    hfResetFold('wakeups', 'Reset Wake-ups', 'Reset the disk wake-up statistics for all disks? This cannot be undone.');
   };
 
   var fields = ['SERVICE','SCAN_PATHS',
@@ -986,13 +986,9 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   // Switching Pool Access Times off: undo Unspin's changes now or at the next array start?
   function hfAskAtimeOff(cb) {
     var text = 'Turn access times off on the pools Unspin enabled them on now, or at the next array start?';
-    if (typeof swal === 'function') {
-      swal({ title: 'Pool Access Times', text: text, type: 'warning', showCancelButton: true,
-             confirmButtonText: 'Now', cancelButtonText: 'At next array start' },
-           function (now) { cb(now ? 'now' : 'later'); });
-    } else {
-      cb(confirm(text + '\n\nOK = now, Cancel = at the next array start') ? 'now' : 'later');
-    }
+    hfConfirm('Pool Access Times', text, 'Now', 'At next array start',
+              function (now) { cb(now ? 'now' : 'later'); },
+              text + '\n\nOK = now, Cancel = at the next array start');
   }
 
   window.hfSave = function (atimeOff) {
@@ -1038,12 +1034,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
       applyBtn.disabled  = true;
       applyBtn.innerHTML = 'Apply';
       // Delayed poll to re-enable toggle button once daemon has restarted/stopped
-      setTimeout(function () {
-        hfPost(pollData(), function (pr) {
-          updateStatus(pr.running, pr.paused, pr.pause_locks);
-          applyPollResult(pr);
-        });
-      }, 3000);
+      setTimeout(hfPoll, 3000);
     });
   };
 
@@ -1053,12 +1044,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     setBusy(btn, running ? 'Stopping\u2026' : 'Starting\u2026');
     hfPost({ action: running ? 'stop' : 'start' }, function (r) {
       showMsg(r.message, r.ok);
-      setTimeout(function () {
-        hfPost(pollData(), function (pr) {
-          updateStatus(pr.running, pr.paused, pr.pause_locks);
-          applyPollResult(pr);
-        });
-      }, 3000);
+      setTimeout(hfPoll, 3000);
     });
   };
 
@@ -1105,12 +1091,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     }
   };
 
-  setInterval(function () {
-    hfPost(pollData(), function (r) {
-      updateStatus(r.running, r.paused, r.pause_locks);
-      applyPollResult(r);
-    });
-  }, 10000);
+  setInterval(hfPoll, 10000);
 
   fitRecentPaths();
   renderStatsLines();
