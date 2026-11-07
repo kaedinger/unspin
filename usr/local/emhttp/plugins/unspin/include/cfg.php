@@ -183,7 +183,7 @@ function disk_wakeups() {
     foreach (array_reverse($recent) as $w) $by_disk[$w['disk']][] = $w;   // newest first
 
     // One card per watched disk, wake-ups or not, plus disks no longer watched
-    // that still have some. An empty card keeps the causes line for the layout.
+    // that still have some.
     $disks = array_unique(array_merge(array_map('basename', scan_paths(settings())), array_keys($counts)));
     usort($disks, 'strnatcmp');
     $spin  = disks_spinning();
@@ -203,8 +203,8 @@ function disk_wakeups() {
                      '<td class="hf-time">' . $e(fmt_when($w['at'])) . '</td></tr>';
         }
         if ($rows === '') $rows = '<tr><td class="hf-muted">No wake-ups recorded yet.</td></tr>';
-        $panel .= disk_card($disk, $rows, '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
-                                          ($causes ? implode(' &middot; ', $causes) : '&nbsp;') . '</div>',
+        $panel .= disk_card($disk, $rows, !$causes ? '' : '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
+                                                          implode(' &middot; ', $causes) . '</div>',
                             isset($spin[$disk]) ? spin_mark($spin[$disk]) : '');
     }
 
