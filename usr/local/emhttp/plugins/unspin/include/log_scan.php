@@ -9,6 +9,8 @@
  *   - "[skip share] <path>" - share not promotable, no reads/promoted data
  */
 
+require_once __DIR__ . '/cfg.php';
+
 const UNSPIN_ACCESS_CAP = 5;
 const UNSPIN_SKIP_CAP   = 5;
 const UNSPIN_CHUNK_BYTES = 65536;
@@ -72,9 +74,7 @@ function log_scan_classify($line, $scan_paths) {
     if (!$match) return null;
     [$disk, $path] = $match;
     $timestamp = substr($line, 0, 19);
-    // Shown time, same as the Disk Wake-ups cards: time only today, else with the date
-    $when = substr($timestamp, 0, 10) === date('Y-m-d') ? substr($timestamp, 11, 5)
-                                                       : date('M j H:i', strtotime($timestamp));
+    $when      = fmt_when(strtotime($timestamp));
 
     if (preg_match('/ reads=(\d+) promoted=(yes|no)$/', $line, $m)) {
         return [$disk, [

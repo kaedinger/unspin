@@ -233,7 +233,7 @@ dt.hf-share-name {
 }
 .recent-col { width: 70px; white-space: nowrap; }
 .recent-col-skip { width: 140px; white-space: nowrap; }
-.recent-col-time { width: 80px; white-space: nowrap; color: #888; text-align: right; }
+.hf-time { width: 100px; white-space: nowrap; color: #888; text-align: right; }
 
 .recent-disks-grid {
   display: grid;
@@ -276,7 +276,6 @@ dt.hf-share-name {
 .hf-wake-label { overflow: hidden; text-overflow: ellipsis; }
 .hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hf-wake-cause { width: 30%; white-space: nowrap; overflow: hidden; }
-.hf-wake-time { width: 80px; white-space: nowrap; color: #888; text-align: right; }
 #hf-wake-cards .recent-path { padding-left: 8px; }
 .hf-wake-none { color: #888; }
 
@@ -693,7 +692,7 @@ dt.hf-share-name {
 <?php else: ?>
             <td class="recent-col-skip" colspan="2">Skipped</td>
 <?php endif; ?>
-            <td class="recent-col-time" title="<?= htmlspecialchars($e['timestamp']) ?>"><?= htmlspecialchars($e['when']) ?></td>
+            <td class="hf-time" title="<?= htmlspecialchars($e['timestamp']) ?>"><?= htmlspecialchars($e['when']) ?></td>
           </tr>
 <?php endforeach; ?>
 <?php if (empty($entries)): ?>
@@ -812,7 +811,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
         } else {
           html += '<td class="recent-col-skip" colspan="2">Skipped</td>';
         }
-        html += '<td class="recent-col-time" title="' + e.timestamp + '">' + e.when + '</td>';
+        html += '<td class="hf-time" title="' + e.timestamp + '">' + e.when + '</td>';
         html += '</tr>';
       });
       html += '</tbody></table></div>';

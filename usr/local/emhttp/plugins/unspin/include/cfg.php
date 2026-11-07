@@ -25,6 +25,11 @@ function fmt_bytes($n) {
     return ($v >= 100 ? round($v) : round($v, 1)) . ' ' . $u[$i];
 }
 
+// Shown time of an event: the time only today, else with the date
+function fmt_when($epoch) {
+    return date(date('Y-m-d', $epoch) === date('Y-m-d') ? 'H:i:s' : 'M j H:i:s', $epoch);
+}
+
 // Promotion statistics from the daemon's stats file (one "date\tpool\tfiles\tbytes"
 // line per day and pool with promotions) - the current copy in RAM, or the one on
 // the flash (written hourly) after a reboot: a one-line summary (plain text) shown
@@ -131,13 +136,13 @@ function disk_wakeups() {
                   '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
                   implode(' &middot; ', $causes) . '</div><table class="recent-table"><tbody>';
         foreach (array_slice($by_disk[$disk] ?? [], 0, 5) as $w) {
-            $when = date(date('Y-m-d', $w['at']) === $today ? 'H:i' : 'M j H:i', $w['at']);
+            $when = fmt_when($w['at']);
             $what = $w['path'] !== '' ? $w['access'] . ' ' . basename($w['path']) : '';
             $tip  = trim($w['path'] . ($w['also'] !== '' ? "\nAlso active: " . $w['also'] : ''));
             $panel .= '<tr title="' . $e($tip) . '">' .
                       '<td class="hf-wake-cause" data-full="' . $e($w['label']) . '">' . $e($w['label']) . '</td>' .
                       '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
-                      '<td class="hf-wake-time">' . $e($when) . '</td></tr>';
+                      '<td class="hf-time">' . $e($when) . '</td></tr>';
         }
         $panel .= '</tbody></table></div>';
     }
