@@ -1413,7 +1413,7 @@ static const std::string WAKE_LIVE  = "/var/run/unspind.wakeups";
 static const std::string WAKE_FILE  = "/boot/config/plugins/unspin/wakeups";
 // Created by the settings page's reset button (which also deletes both files).
 static const std::string WAKE_RESET = "/var/run/unspind.wakeups-reset";
-static constexpr size_t  WAKE_RECENT_MAX = 50;
+static constexpr size_t  WAKE_RECENT_PER_DISK = 10;   // per disk, so a busy disk can't push a quiet one out
 
 struct WakeEntry {
     time_t      at = 0;
@@ -1680,6 +1680,7 @@ static void scan_blocked(DiskState& d) {
     DIR* proc = opendir("/proc");
     if (!proc) return;
     std::string seen;
+    int others = 0;   // waiting too, but on nothing of this disk
     char link[PATH_MAX];
     struct dirent* pe;
     while ((pe = readdir(proc)) != nullptr) {
@@ -1705,9 +1706,9 @@ static void scan_blocked(DiskState& d) {
             closedir(fds);
         }
         if (rank < 3) consider(dir + "/cwd");
-        seen += " " + read_first_line(dir + "/comm") + "(" + pe->d_name + ")" +
-                (where.empty() ? "" : " " + qpath(where));
-        if (!rank || std::any_of(d.blocked.begin(), d.blocked.end(),
+        if (!rank) { ++others; continue; }
+        seen += " " + read_first_line(dir + "/comm") + "(" + pe->d_name + ") " + qpath(where);
+        if (std::any_of(d.blocked.begin(), d.blocked.end(),
                                  [&](const Suspect& b) { return b.pid == pid; }))
             continue;
         auto s   = describe_process(pid);
@@ -1722,7 +1723,9 @@ static void scan_blocked(DiskState& d) {
         if (d.blocked.size() < SUSPECTS_MAX) d.blocked.push_back(std::move(s));
     }
     closedir(proc);
-    if (!seen.empty() && seen != d.blocked_logged) log_debug(d.name + " spinning up, waiting:" + seen);
+    if (seen.empty()) seen = " nothing of this disk";
+    if (seen != d.blocked_logged)
+        log_debug(d.name + " spinning up, waiting:" + seen + " (" + std::to_string(others) + " other processes waiting)");
     d.blocked_logged = seen;
 }
 
@@ -1894,7 +1897,10 @@ static void record_wakeup(DiskState& d) {
     check_wakeups_reset();
     _wake_counts[{wake_date(w.at), w.disk, w.label}]++;
     _wake_recent.push_back(std::move(w));
-    while (_wake_recent.size() > WAKE_RECENT_MAX) _wake_recent.pop_front();
+    auto n = std::count_if(_wake_recent.begin(), _wake_recent.end(),
+                           [&](const WakeEntry& e) { return e.disk == d.name; });
+    for (auto it = _wake_recent.begin(); n > (long)WAKE_RECENT_PER_DISK && it != _wake_recent.end();)
+        if (it->disk == d.name) { it = _wake_recent.erase(it); --n; } else ++it;
     _wake_flash_dirty = true;
     write_wakeups(WAKE_LIVE);   // a wake-up is rare: the page shows it right away
 }

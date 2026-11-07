@@ -271,11 +271,14 @@ dt.hf-share-name {
 .hf-stats-sum { font-weight: bold; }
 
 /* Disk wake-ups: a long cause (an SMB user@client) is cut, not widening the grid */
-.hf-wake-grid { grid-template-columns: minmax(0, 1fr) auto auto auto; }
-.hf-wake-label { overflow: hidden; text-overflow: ellipsis; padding-left: 1em; }
-.hf-wake-recent { width: 400px; max-width: 100%; margin: 8px 0 6px; }
-.hf-wake-recent > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hf-wake-head, .hf-wake-when { opacity: 0.7; }
+.hf-wake-grid { grid-template-columns: auto auto auto auto minmax(0, 1fr); }
+.hf-wake-grid > span:nth-child(5) { opacity: 0.7; }
+.hf-wake-label { overflow: hidden; text-overflow: ellipsis; }
+.hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hf-wake-cause { width: 30%; white-space: nowrap; overflow: hidden; }
+.hf-wake-time { width: 80px; white-space: nowrap; color: #888; text-align: right; }
+#hf-wake-cards .recent-path { padding-left: 8px; }
+.hf-wake-none { color: #888; }
 
 /* Pool Fill Limits row, kept within the settings column */
 .hf-pool-row { width: 400px; max-width: 100%; margin-bottom: 4px; }
@@ -313,14 +316,14 @@ dt.hf-share-name {
 <?php $wakeups = disk_wakeups(); ?>
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Disk Wake-ups</dt>
   <dd>
-    <div class="hf-fold-line" onclick="hfFold('wakeups')" title="Click for details per disk and the latest wake-ups">
+    <div class="hf-fold-line" onclick="hfFold('wakeups')" title="Click for the numbers per disk">
       <span id="hf-fold-caret-wakeups">&#9656;</span> <span id="hf-wakeups-line"><?= htmlspecialchars($wakeups['summary']) ?></span>
     </div>
     <div class="hf-fold-wakeups" style="display:none;">
       <div id="hf-wakeups-table"><?= $wakeups['detail'] ?></div>
       <input type="button" value="Reset Wake-ups" onclick="hfResetWakeups()">
     </div>
-    <div class="hf-help">Which program, container, VM or SMB client woke a sleeping array disk: today, average per day and in total, with the last cause. Click the line for the numbers per disk and cause and the latest wake-ups; hover over one for the full path. A read served from RAM doesn't wake a disk and isn't counted.
+    <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups; hover over one for the full path. A read served from RAM doesn't wake a disk and isn't counted.
       <br><em>Accessing</em>: the disk woke for a directory listing or a file check, which opens no file; the program shown was found waiting for the disk.
       <br><em>No file opened</em>: the same, but no waiting program was found, for example because it runs inside a container. The <em>Dynamix Cache Directories</em> plugin prevents most of these.
       <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.
@@ -668,6 +671,11 @@ dt.hf-share-name {
 
 <br>
 
+<div id="hf-wake-panel" style="margin-bottom:24px;<?= ($c['TRACK_WAKEUPS'] ?? 'yes') === 'no' ? 'display:none;' : '' ?>">
+  <strong class="hf-fold-line" style="display:block;margin-bottom:10px;" onclick="hfFold('wakepanel')"><span id="hf-fold-caret-wakepanel">&#9662;</span> Latest Disk Wake-ups</strong>
+  <div id="hf-wake-cards" class="hf-fold-wakepanel recent-disks-grid"><?= $wakeups['panel'] ?></div>
+</div>
+
 <div id="recent-panel" style="margin-bottom:12px;<?= ($c['LOG_LEVEL'] ?? '') === 'debug' ? '' : 'display:none;' ?>">
   <strong style="display:block;margin-bottom:10px;">5 Recently Accessed Files</strong>
   <div id="recent-disks" class="recent-disks-grid">
@@ -772,7 +780,8 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
 
   // Re-fit every path cell's displayed text to its actual rendered width.
   function fitRecentPaths() {
-    document.querySelectorAll('#recent-disks td.recent-path[data-full]').forEach(function (td) {
+    document.querySelectorAll('#recent-disks td.recent-path[data-full], #hf-wake-cards td[data-full]').forEach(function (td) {
+      if (!td.clientWidth) return;   // folded or hidden: fitted when shown
       var full = td.getAttribute('data-full');
       var font = getComputedStyle(td).font;
       td.textContent = fitMiddleEllipsis(full, td.clientWidth - 4, font);
@@ -918,6 +927,10 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   function applyFoldData(name, data) {
     HF_FOLD[name] = data;
     document.getElementById('hf-' + name + '-table').innerHTML = data.detail;
+    if (data.panel !== undefined) {
+      document.getElementById('hf-wake-cards').innerHTML = data.panel;
+      fitRecentPaths();
+    }
     renderFoldLine(name);
   }
   function renderStatsLines() { renderFoldLine('stats'); renderFoldLine('wakeups'); }
@@ -955,6 +968,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     items.forEach(function (el) { el.style.display = open ? '' : 'none'; });
     document.getElementById('hf-fold-caret-' + name).innerHTML = open ? '&#9662;' : '&#9656;';
     if (HF_FOLD[name]) renderFoldLine(name);
+    if (open) fitRecentPaths();
     try { localStorage.setItem('unspin-fold-' + name, open ? '1' : '0'); } catch (e) {}
   };
 
@@ -963,6 +977,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     try { open = localStorage.getItem('unspin-fold-' + name) === '1'; } catch (e) {}
     if (open) hfFold(name, true);
   });
+  try { if (localStorage.getItem('unspin-fold-wakepanel') === '0') hfFold('wakepanel', false); } catch (e) {}   // open by default
 
   function updateSharesSummary() {
     var el = document.getElementById('hf-shares-summary');
@@ -1068,6 +1083,8 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
         if (r.cfg.ENABLE_POOL_ATIME !== undefined) HF_ATIME_SAVED = r.cfg.ENABLE_POOL_ATIME;
         var panel = document.getElementById('recent-panel');
         if (panel) panel.style.display = r.cfg.LOG_LEVEL === 'debug' ? '' : 'none';
+        var wakePanel = document.getElementById('hf-wake-panel');
+        if (wakePanel) wakePanel.style.display = r.cfg.TRACK_WAKEUPS === 'no' ? 'none' : '';
       }
       applyBtn.disabled  = true;
       applyBtn.innerHTML = 'Apply';

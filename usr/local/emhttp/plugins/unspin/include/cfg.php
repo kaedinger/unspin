@@ -79,8 +79,9 @@ function promotion_stats() {
 // Disk wake-ups from the daemon's wakeups file (RAM copy, or the flash copy after
 // a reboot): "C date disk label count" lines per day, disk and cause, and
 // "W epoch disk label name access path also" lines for the recent wake-ups.
-// Returns the same shape as promotion_stats(): a summary line, the header text
-// while open, and the detail HTML (per disk and cause, then the latest ones).
+// Returns the same shape as promotion_stats() - a summary line, the header text
+// while open, and the detail HTML (one row per disk) - plus 'panel': one card per
+// disk with its counts per cause and its latest wake-ups, shown above the log.
 function disk_wakeups() {
     $today  = date('Y-m-d');
     $since  = null;
@@ -101,7 +102,8 @@ function disk_wakeups() {
                          'access' => $f[5], 'path' => $f[6], 'also' => $f[7]];
         }
     }
-    if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet', 'detail' => ''];
+    if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',
+                          'detail' => '', 'panel' => '<div class="hf-wake-none">No wake-ups recorded yet.</div>'];
 
     $days = max(1, (int)round((strtotime($today) - strtotime($since)) / 86400) + 1);
     $avg  = fn($n) => number_format($n / $days, $n / $days < 10 ? 1 : 0);
@@ -109,36 +111,44 @@ function disk_wakeups() {
     foreach ($counts as $labels) foreach ($labels as $c) { $sum[0] += $c[0]; $sum[1] += $c[1]; }
 
     $e = fn($s) => htmlspecialchars($s);
-    $detail = '<div class="hf-stats-grid hf-wake-grid"><span></span><span>Today</span><span>Avg/day</span><span>Total</span>';
     uksort($counts, 'strnatcmp');
-    foreach ($counts as $disk => $labels) {
-        $dt = [array_sum(array_column($labels, 0)), array_sum(array_column($labels, 1))];
-        $detail .= '<span class="hf-stats-sum">' . $e($disk) . '</span><span class="hf-stats-sum">' . $dt[0] .
-                   '</span><span class="hf-stats-sum">' . $avg($dt[1]) . '</span><span class="hf-stats-sum">' . $dt[1] . '</span>';
-        uasort($labels, fn($a, $b) => $b[1] <=> $a[1]);
-        foreach ($labels as $label => $c)
-            $detail .= '<span class="hf-wake-label" title="' . $e($label) . '">' . $e($label) . '</span><span>' . $c[0] .
-                       '</span><span>' . $avg($c[1]) . '</span><span>' . $c[1] . '</span>';
-    }
-    $detail .= '</div>';
+    $by_disk = [];
+    foreach (array_reverse($recent) as $w) $by_disk[$w['disk']][] = $w;   // newest first
 
-    if ($recent) {
-        $detail .= '<div class="hf-wake-recent"><div class="hf-wake-head">Latest wake-ups</div>';
-        foreach (array_slice(array_reverse($recent), 0, 20) as $w) {
+    $detail = '<div class="hf-stats-grid hf-wake-grid"><span></span><span>Today</span><span>Avg/day</span>' .
+              '<span>Total</span><span>Top cause</span>';
+    $panel  = '';
+    foreach ($counts as $disk => $labels) {
+        uasort($labels, fn($a, $b) => $b[1] <=> $a[1]);
+        $top = array_key_first($labels);
+        $dt  = [array_sum(array_column($labels, 0)), array_sum(array_column($labels, 1))];
+        $detail .= '<span>' . $e($disk) . '</span><span>' . $dt[0] . '</span><span>' . $avg($dt[1]) .
+                   '</span><span>' . $dt[1] . '</span><span class="hf-wake-label" title="' . $e($top) . '">' . $e($top) . '</span>';
+
+        $causes = [];
+        foreach ($labels as $label => $c) $causes[] = $e($label) . ' ' . $c[1];
+        $panel .= '<div class="recent-disk hf-bordered"><div class="recent-disk-title">' . $e($disk) . '</div>' .
+                  '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
+                  implode(' &middot; ', $causes) . '</div><table class="recent-table"><tbody>';
+        foreach (array_slice($by_disk[$disk] ?? [], 0, 5) as $w) {
             $when = date(date('Y-m-d', $w['at']) === $today ? 'H:i' : 'M j H:i', $w['at']);
             $what = $w['path'] !== '' ? $w['access'] . ' ' . basename($w['path']) : '';
             $tip  = trim($w['path'] . ($w['also'] !== '' ? "\nAlso active: " . $w['also'] : ''));
-            $detail .= '<div title="' . $e($tip) . '"><span class="hf-wake-when">' . $e($when) . '</span> ' .
-                       $e($w['disk']) . ' &middot; ' . $e($w['label']) . ($what !== '' ? ' &middot; ' . $e($what) : '') . '</div>';
+            $panel .= '<tr title="' . $e($tip) . '">' .
+                      '<td class="hf-wake-cause" data-full="' . $e($w['label']) . '">' . $e($w['label']) . '</td>' .
+                      '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
+                      '<td class="hf-wake-time">' . $e($when) . '</td></tr>';
         }
-        $detail .= '</div>';
+        $panel .= '</tbody></table></div>';
     }
+    $detail .= '</div>';
 
     $last = end($recent);
     return ['summary' => 'Today ' . $sum[0] . ' · Avg ' . $avg($sum[1]) . ' · Total ' . $sum[1] .
                          ($last ? ' · Last: ' . $last['name'] : ''),
-            'open'    => 'Per disk and cause, averaged over ' . number_format($days) . ($days == 1 ? ' day' : ' days'),
-            'detail'  => $detail];
+            'open'    => 'Per disk, averaged over ' . number_format($days) . ($days == 1 ? ' day' : ' days'),
+            'detail'  => $detail,
+            'panel'   => $panel];
 }
 
 // Why the daemon is paused, for the status line: what it reports itself in
