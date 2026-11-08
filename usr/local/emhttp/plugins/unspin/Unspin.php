@@ -268,6 +268,10 @@ dt.hf-share-name {
 .hf-wake-causes { font-size: 0.85em; opacity: 0.8; margin-bottom: 8px; }
 .hf-wake-cause { width: 30%; }
 #hf-wake-cards .recent-path { padding-left: 8px; }
+#hf-wake-cards:not(.hf-wake-all) tr.hf-wake-more,
+#hf-wake-cards:not(.hf-wake-all) .hf-more-hide,
+#hf-wake-cards.hf-wake-all .hf-more-show { display: none; }
+.hf-wake-toggle { cursor: pointer; font-size: 0.85em; opacity: 0.8; margin-top: 4px; text-decoration: underline; }
 .hf-spin {
   display: inline-block;
   width: 8px;
@@ -325,7 +329,7 @@ dt.hf-share-name {
       <div id="hf-wakeups-table"><?= $wakeups['detail'] ?></div>
       <input type="button" value="Reset Wake-ups" onclick="hfResetWakeups()">
     </div>
-    <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't wake a disk and isn't counted.
+    <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups, or up to 20 with <em>more</em> under a card; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't wake a disk and isn't counted.
       <br><em>Listing a directory</em>, <em>looking up a name</em>, <em>reading attributes</em>: the disk woke for something that opens no file; the program shown was found waiting for the disk. <em>User share (requester not found)</em>: only the user share file system was found waiting, not the program that asked it.
       <br><em>No file opened</em>: the same, but no waiting program was found. The <em>Dynamix Cache Directories</em> plugin prevents many directory listings, but not every name lookup.
       <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.
@@ -951,6 +955,17 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     if (open) hfFold(name, true);
   });
   try { if (localStorage.getItem('unspin-fold-wakepanel') === '0') hfFold('wakepanel', false); } catch (e) {}   // open by default
+
+  // "N more" under a wake-up card shows the older wake-ups of every card. A class
+  // on the container, so the cards' re-render by the status poll keeps it.
+  window.hfWakeAll = function (open) {
+    var cards = document.getElementById('hf-wake-cards');
+    if (open === undefined) open = !cards.classList.contains('hf-wake-all');
+    cards.classList.toggle('hf-wake-all', open);
+    if (open) fitRecentPaths();
+    try { localStorage.setItem('unspin-wake-all', open ? '1' : '0'); } catch (e) {}
+  };
+  try { if (localStorage.getItem('unspin-wake-all') === '1') hfWakeAll(true); } catch (e) {}
 
   function updateSharesSummary() {
     var el = document.getElementById('hf-shares-summary');

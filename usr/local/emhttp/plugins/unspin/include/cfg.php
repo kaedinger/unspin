@@ -7,6 +7,7 @@ const UNSPIN_CFG      = '/boot/config/plugins/unspin/unspin.cfg';
 const UNSPIN_DEFAULTS = '/usr/local/emhttp/plugins/unspin/unspin.cfg.default';
 const UNSPIN_LOG      = '/var/log/unspin.log';
 const UNSPIN_PID      = '/var/run/unspind.pid';
+const WAKE_SHOWN      = 5;   // wake-ups per disk card before "N more"
 
 function load_cfg($path) {
     $cfg = [];
@@ -84,9 +85,9 @@ function fmt_when($epoch) {
 // One card of the per-disk panels (Latest Disk Wake-ups, Recently Accessed Files):
 // the disk as title, optionally after a mark (HTML), an optional line under it
 // (HTML), and the table rows (HTML).
-function disk_card($disk, $rows, $sub = '', $mark = '') {
+function disk_card($disk, $rows, $sub = '', $mark = '', $foot = '') {
     return '<div class="recent-disk hf-bordered"><div class="recent-disk-title">' . $mark . htmlspecialchars($disk) . '</div>' .
-           $sub . '<table class="recent-table"><tbody>' . $rows . '</tbody></table></div>';
+           $sub . '<table class="recent-table"><tbody>' . $rows . '</tbody></table>' . $foot . '</div>';
 }
 
 // Current spin state of the array disks from Unraid's disks.ini: name => spinning
@@ -193,19 +194,24 @@ function disk_wakeups() {
         uasort($labels, fn($a, $b) => $b[1] <=> $a[1]);
         $causes = [];
         foreach ($labels as $label => $c) $causes[] = $e($label) . ' ' . $c[1];
+        // The newest WAKE_SHOWN, the rest of the 20 the daemon keeps behind "N more"
         $rows = '';
-        foreach (array_slice($by_disk[$disk] ?? [], 0, 5) as $w) {
+        $list = array_slice($by_disk[$disk] ?? [], 0, 20);
+        foreach ($list as $i => $w) {
             $what  = trim($w['access'] . ($w['path'] !== '' ? ' ' . basename($w['path']) : ''));
             $tip   = trim($w['path'] . ($w['also'] !== '' ? "\nAlso active: " . $w['also'] : ''));
-            $rows .= '<tr title="' . $e($tip) . '">' .
+            $rows .= '<tr' . ($i >= WAKE_SHOWN ? ' class="hf-wake-more"' : '') . ' title="' . $e($tip) . '">' .
                      '<td class="hf-wake-cause" data-full="' . $e($w['label']) . '">' . $e($w['label']) . '</td>' .
                      '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
                      '<td class="hf-time">' . $e(fmt_when($w['at'])) . '</td></tr>';
         }
         if ($rows === '') $rows = '<tr><td class="hf-muted">No wake-ups recorded yet.</td></tr>';
+        $more = count($list) - WAKE_SHOWN;
+        $foot = $more <= 0 ? '' : '<div class="hf-wake-toggle" onclick="hfWakeAll()">' .
+                                  '<span class="hf-more-show">' . $more . ' more</span><span class="hf-more-hide">Show fewer</span></div>';
         $panel .= disk_card($disk, $rows, !$causes ? '' : '<div class="hf-wake-causes" title="' . $e(implode(', ', array_keys($labels))) . '">' .
                                                           implode(' &middot; ', $causes) . '</div>',
-                            isset($spin[$disk]) ? spin_mark($spin[$disk]) : '');
+                            isset($spin[$disk]) ? spin_mark($spin[$disk]) : '', $foot);
     }
 
     if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',

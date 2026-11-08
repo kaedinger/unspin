@@ -1413,7 +1413,7 @@ static const std::string WAKE_LIVE  = "/var/run/unspind.wakeups";
 static const std::string WAKE_FILE  = "/boot/config/plugins/unspin/wakeups";
 // Created by the settings page's reset button (which also deletes both files).
 static const std::string WAKE_RESET = "/var/run/unspind.wakeups-reset";
-static constexpr size_t  WAKE_RECENT_PER_DISK = 10;   // per disk, so a busy disk can't push a quiet one out
+static constexpr size_t  WAKE_RECENT_PER_DISK = 20;   // per disk, so a busy disk can't push a quiet one out
 
 struct WakeEntry {
     time_t      at = 0;
