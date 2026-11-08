@@ -1669,17 +1669,71 @@ static bool has_blocked_thread(const std::string& proc_dir) {
     return found;
 }
 
+// What a waiting process waits for, from the kernel stacks of its waiting
+// threads. op: the innermost file operation ("looking up a name"). kind:
+// "disk" when it waits inside a disk's filesystem, "fuse" when it waits for a
+// FUSE filesystem like shfs, so it's the process that asked shfs; empty when
+// it waits for something else.
+struct BlockedOp { std::string op, kind; };
+
+static BlockedOp blocked_op(const std::string& proc_dir) {
+    static const std::pair<const char*, const char*> OPS[] = {
+        {"iterate_dir", "listing a directory"},       {"xfs_readdir", "listing a directory"},
+        {"__lookup_slow", "looking up a name"},       {"lookup_slow", "looking up a name"},
+        {"lookup_open", "looking up a name"},         {"lookup_one_qstr_excl", "looking up a name"},
+        {"xfs_dir_lookup", "looking up a name"},      {"fuse_lookup", "looking up a name"},
+        {"vfs_getxattr", "reading extended attributes"}, {"__vfs_getxattr", "reading extended attributes"},
+        {"vfs_getattr", "reading attributes"},        {"vfs_getattr_nosec", "reading attributes"},
+        {"vfs_statx", "reading attributes"},
+        {"vfs_read", "reading"},                      {"filemap_read", "reading"},
+        {"vfs_write", "writing"},                     {"vfs_fsync_range", "writing"},
+    };
+    static const char* DISK_FS[] = {"xfs_", "zfs_", "zpl_", "btrfs_", "ext4_"};
+    BlockedOp out;
+    DIR* tasks = opendir((proc_dir + "/task").c_str());
+    if (!tasks) return out;
+    struct dirent* te;
+    while (out.kind.empty() && (te = readdir(tasks)) != nullptr) {
+        if (te->d_name[0] == '.') continue;
+        auto t = proc_dir + "/task/" + te->d_name;
+        auto st = read_first_line(t + "/stat");
+        auto q = st.rfind(')');
+        if (q == std::string::npos || q + 2 >= st.size() || st[q + 2] != 'D') continue;
+        // "[<0>] xfs_dir_lookup+0x5e/0xb0", innermost call first
+        std::ifstream f(t + "/stack");
+        std::string line, op, kind;
+        while (std::getline(f, line)) {
+            auto a = line.find("] ");
+            if (a == std::string::npos) continue;
+            auto fn = line.substr(a + 2, line.find('+', a) - (a + 2));
+            if (kind.empty()) {
+                // fuse_dev_*: a FUSE server (shfs) waiting for its next request
+                if (fn == "request_wait_answer" || (fn.rfind("fuse_", 0) == 0 && fn.rfind("fuse_dev_", 0) != 0))
+                    kind = "fuse";
+                for (auto* p : DISK_FS) if (fn.rfind(p, 0) == 0) kind = "disk";
+            }
+            if (op.empty())
+                for (const auto& [name, what] : OPS) if (fn == name) { op = what; break; }
+        }
+        if (!kind.empty()) out = {op.empty() ? "accessing" : op, kind};
+    }
+    closedir(tasks);
+    return out;
+}
+
 // A directory listing or a file check on a sleeping disk produces no file
 // event, but the process behind it waits in uninterruptible sleep until the
 // disk has spun up (~11 s). Scanned once a second during the spin-up: waiting
 // processes with a directory or file of this disk or of a user share open, or
-// as their working directory, explain a wake-up that has no file event.
+// as their working directory, explain a wake-up that has no file event. So
+// does, as a last resort, a process with no such path that waits inside a
+// disk's filesystem (shfs looking up a name) or for shfs (its requester),
+// unless it has a path on another disk or pool open: then it waits for that one.
 static void scan_blocked(DiskState& d) {
     d.blocked_scan_ms = now_ms();
     DIR* proc = opendir("/proc");
     if (!proc) return;
-    std::string seen;
-    int others = 0;   // waiting too, but on nothing of this disk
+    std::string seen, others;   // others: waiting too, but not for this disk
     char link[PATH_MAX];
     struct dirent* pe;
     while ((pe = readdir(proc)) != nullptr) {
@@ -1688,6 +1742,7 @@ static void scan_blocked(DiskState& d) {
         auto dir = std::string("/proc/") + pe->d_name;
         if (pid == getpid() || !has_blocked_thread(dir)) continue;
         int rank = 0;
+        bool elsewhere = false;   // a path on another disk or pool
         std::string where;
         auto consider = [&](const std::string& lp) {
             auto n = readlink(lp.c_str(), link, sizeof(link) - 1);
@@ -1696,6 +1751,7 @@ static void scan_blocked(DiskState& d) {
             int r = 0;
             if (l == d.mount || l.compare(0, d.mount.size() + 1, d.mount + "/") == 0)  r = 3;
             else if (l.rfind("/mnt/user/", 0) == 0 || l.rfind("/mnt/user0/", 0) == 0) r = 2;
+            else if (l.rfind("/mnt/", 0) == 0) elsewhere = true;
             if (r > rank) { rank = r; where = l; }
         };
         if (DIR* fds = opendir((dir + "/fd").c_str())) {
@@ -1705,16 +1761,25 @@ static void scan_blocked(DiskState& d) {
             closedir(fds);
         }
         if (rank < 3) consider(dir + "/cwd");
-        if (!rank) { ++others; continue; }
-        seen += " " + read_first_line(dir + "/comm") + "(" + pe->d_name + ") " + qpath(where);
+        auto op   = blocked_op(dir);
+        auto comm = read_first_line(dir + "/comm");
+        if (comm == "shfs" && op.kind == "fuse") op = {};   // shfs serving, not asking
+        // shfs serves every disk and pool, so it always has some of them open
+        if (!rank && (!elsewhere || comm == "shfs")) rank = op.kind == "fuse" ? 2 : op.kind == "disk" ? 1 : 0;
+        if (!rank) {
+            others += " " + comm + "(" + pe->d_name + ")" + (op.kind.empty() ? "" : " " + op.op);
+            continue;
+        }
+        seen += " " + comm + "(" + pe->d_name + ")" + (op.kind.empty() ? "" : " " + op.op) +
+                (where.empty() ? "" : " " + qpath(where));
         if (std::any_of(d.blocked.begin(), d.blocked.end(),
                                  [&](const Suspect& b) { return b.pid == pid; }))
             continue;
         auto s   = describe_process(pid);
         s.at_ms  = s.last_ms = d.blocked_scan_ms;
-        s.access = "accessing";
+        s.access = op.kind.empty() ? "accessing" : op.op;
         s.path   = where;
-        if (s.via_shfs) {   // shfs holds the disk path; its requester the user share path
+        if (s.via_shfs && !where.empty()) {   // shfs holds the disk path; its requester the user share path
             resolve_shfs(s, d);
             rank = s.via_shfs ? 1 : 2;
         }
@@ -1724,7 +1789,7 @@ static void scan_blocked(DiskState& d) {
     closedir(proc);
     if (seen.empty()) seen = " nothing of this disk";
     if (seen != d.blocked_logged)
-        log_debug(d.name + " spinning up, waiting:" + seen + " (" + std::to_string(others) + " other processes waiting)");
+        log_debug(d.name + " spinning up, waiting:" + seen + (others.empty() ? "" : " - also waiting:" + others));
     d.blocked_logged = seen;
 }
 
@@ -1870,7 +1935,7 @@ static void record_wakeup(DiskState& d) {
         w.access = pick->access;
         w.path   = pick->path;
         msg += " by " + pick->label + (pick->detail.empty() ? "" : " (" + pick->detail + ")") +
-               " " + pick->access + " " + qpath(pick->path);
+               " " + pick->access + (pick->path.empty() ? "" : " " + qpath(pick->path));
     } else if (d.io_seen) {
         w.label = "no file opened";
         w.name  = "dir listing";

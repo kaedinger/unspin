@@ -326,8 +326,8 @@ dt.hf-share-name {
       <input type="button" value="Reset Wake-ups" onclick="hfResetWakeups()">
     </div>
     <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't wake a disk and isn't counted.
-      <br><em>Accessing</em>: the disk woke for a directory listing or a file check, which opens no file; the program shown was found waiting for the disk.
-      <br><em>No file opened</em>: the same, but no waiting program was found, for example because it runs inside a container. The <em>Dynamix Cache Directories</em> plugin prevents most of these.
+      <br><em>Listing a directory</em>, <em>looking up a name</em>, <em>reading attributes</em>: the disk woke for something that opens no file; the program shown was found waiting for the disk. <em>User share (requester not found)</em>: only the user share file system was found waiting, not the program that asked it.
+      <br><em>No file opened</em>: the same, but no waiting program was found. The <em>Dynamix Cache Directories</em> plugin prevents many directory listings, but not every name lookup.
       <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.
       <br>Parity is not listed: it wakes when a data disk is written, and that write is listed under the data disk. Pools are not watched.</div>
   </dd>

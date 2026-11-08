@@ -195,7 +195,7 @@ function disk_wakeups() {
         foreach ($labels as $label => $c) $causes[] = $e($label) . ' ' . $c[1];
         $rows = '';
         foreach (array_slice($by_disk[$disk] ?? [], 0, 5) as $w) {
-            $what  = $w['path'] !== '' ? $w['access'] . ' ' . basename($w['path']) : '';
+            $what  = trim($w['access'] . ($w['path'] !== '' ? ' ' . basename($w['path']) : ''));
             $tip   = trim($w['path'] . ($w['also'] !== '' ? "\nAlso active: " . $w['also'] : ''));
             $rows .= '<tr title="' . $e($tip) . '">' .
                      '<td class="hf-wake-cause" data-full="' . $e($w['label']) . '">' . $e($w['label']) . '</td>' .
