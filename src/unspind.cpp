@@ -1196,6 +1196,9 @@ struct DiskState {
 };
 
 static std::vector<DiskState> _disks;
+// Parity disks: no mountpoint, so not in _disks. A parity disk only spins up
+// for a write, which tells a buffered write from a read when nobody waited.
+static std::vector<DiskState> _parity;
 static struct timespec        _disks_ini_mtime = {0, 0};
 
 static int64_t now_ms() {
@@ -1229,16 +1232,18 @@ static std::unordered_map<std::string, IoCounters> read_diskstats() {
 static void load_disks() {
     std::ifstream f(DISKS_INI);
     if (!f) return;
-    std::vector<DiskState> fresh;
+    std::vector<DiskState> fresh, fresh_parity;
     std::unordered_map<std::string, std::string> kv;
     auto flush = [&]() {
-        if (kv["type"] == "Data" && !kv["fsMountpoint"].empty() && !kv["device"].empty()) {
+        auto data   = kv["type"] == "Data" && !kv["fsMountpoint"].empty();
+        auto parity = kv["type"] == "Parity";
+        if ((data || parity) && !kv["device"].empty()) {
             DiskState d;
             d.name     = kv["name"];
             d.device   = kv["device"];
-            d.mount    = kv["fsMountpoint"];
+            d.mount    = data ? kv["fsMountpoint"] : "";
             d.spundown = kv["spundown"] == "1";
-            fresh.push_back(d);
+            (data ? fresh : fresh_parity).push_back(d);
         }
         kv.clear();
     };
@@ -1255,6 +1260,23 @@ static void load_disks() {
 
     std::unordered_map<std::string, IoCounters> io;
     auto now = time(nullptr);
+    for (auto& p : fresh_parity) {   // only the spin-up start matters
+        auto old = std::find_if(_parity.begin(), _parity.end(),
+                                [&](const DiskState& o) { return o.name == p.name && o.device == p.device; });
+        auto was_spundown = old != _parity.end() && old->spundown;
+        if (old != _parity.end()) {
+            p.baseline = old->baseline;
+            p.io_seen  = old->io_seen;
+            p.io_at_ms = old->io_at_ms;
+        }
+        if (p.spundown && !was_spundown) {
+            if (io.empty()) io = read_diskstats();
+            p.baseline = io[p.device];
+            p.io_seen  = false;
+            p.io_at_ms = 0;
+        }
+    }
+    _parity.swap(fresh_parity);
     for (auto& d : fresh) {
         auto old = std::find_if(_disks.begin(), _disks.end(),
                                 [&](const DiskState& o) { return o.name == d.name; });
@@ -1329,22 +1351,33 @@ static void update_disk_state() {
                                  [&](const Suspect& s) { return now - s.last_ms > SUSPECT_MAX_AGE_MS; }),
                              d.suspects.end());
     }
-    auto pending = std::any_of(_disks.begin(), _disks.end(),
-                               [](const DiskState& d) { return d.spundown && !d.io_seen; });
-    if (!pending) return;
+    auto waiting = [](const DiskState& d) { return d.spundown && !d.io_seen; };
+    if (std::none_of(_disks.begin(), _disks.end(), waiting) &&
+        std::none_of(_parity.begin(), _parity.end(), waiting)) return;
     auto io = read_diskstats();
-    for (auto& d : _disks) {
-        if (!d.spundown || d.io_seen) continue;
+    auto started = [&](DiskState& d) {
+        if (!waiting(d)) return false;
         auto it = io.find(d.device);
-        if (it == io.end()) continue;
+        if (it == io.end()) return false;
         const auto& c = it->second;
-        if (c.reads != d.baseline.reads || c.writes != d.baseline.writes || c.in_flight > 0) {
-            d.io_seen  = true;
-            d.io_at_ms = now;
-            log_debug(d.name + " is spinning up");
-            if (_cfg.track_wakeups) scan_blocked(d);   // the cause waits for the disk right now
-        }
-    }
+        if (c.reads == d.baseline.reads && c.writes == d.baseline.writes && c.in_flight == 0) return false;
+        d.io_seen  = true;
+        d.io_at_ms = now;
+        log_debug(d.name + " is spinning up");
+        return true;
+    };
+    for (auto& p : _parity) started(p);
+    for (auto& d : _disks)
+        if (started(d) && _cfg.track_wakeups) scan_blocked(d);   // the cause waits for the disk right now
+}
+
+static constexpr int64_t PARITY_WINDOW_MS = 3000;   // parity starts spinning up with the data disk it writes for
+
+// A parity disk started spinning up together with this disk: a write.
+static bool parity_woke_with(const DiskState& d) {
+    return std::any_of(_parity.begin(), _parity.end(), [&](const DiskState& p) {
+        return p.io_at_ms && std::llabs(p.io_at_ms - d.io_at_ms) <= PARITY_WINDOW_MS;
+    });
 }
 
 // While a wake-up may be under way, the main loop polls fast so the spin-up
@@ -1936,6 +1969,13 @@ static void record_wakeup(DiskState& d) {
         w.path   = pick->path;
         msg += " by " + pick->label + (pick->detail.empty() ? "" : " (" + pick->detail + ")") +
                " " + pick->access + (pick->path.empty() ? "" : " " + qpath(pick->path));
+    } else if (d.io_seen && parity_woke_with(d)) {
+        // Nobody waited, and parity woke too: a change kept in RAM was written
+        // out later, one without a file write event (times, attributes, a new,
+        // renamed or deleted file or folder).
+        w.label = "metadata change";
+        w.name  = "metadata";
+        msg += " - metadata change written later (times, attributes, create, rename or delete; parity woke too)";
     } else if (d.io_seen) {
         w.label = "no file opened";
         w.name  = "dir listing";
