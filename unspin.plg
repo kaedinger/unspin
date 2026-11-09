@@ -26,6 +26,7 @@
 - fix: a file could miss its promotion when the kernel merged its events
 - new: if the daemon dies unexpectedly, the log says why, and the next start notes the unclean stop
 - fix: Recently Accessed Files shows the date for entries before today, not just the time
+- fix: prevent additional Unspin instances from running
 - cleaned up code
 
 ### 2026.11.07.56244

@@ -30,6 +30,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <sys/fanotify.h>
+#include <sys/file.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -2916,6 +2917,37 @@ static void check_pool_atime() {
 // Main
 // ---------------------------------------------------------------------------
 
+static const std::string LOCK_FILE = "/var/run/unspind.lock";
+
+// Only one unspind may run: two would promote the same files at the same time.
+// The kernel releases the lock however its holder ends, SIGKILL included.
+static bool take_instance_lock() {
+    int fd = open(LOCK_FILE.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        log_warn("Cannot open " + LOCK_FILE + ": " + strerror(errno) + " - not checking for a second unspind");
+        return true;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+        if (errno != EWOULDBLOCK) {
+            log_warn("Cannot lock " + LOCK_FILE + ": " + strerror(errno) + " - not checking for a second unspind");
+            close(fd);
+            return true;
+        }
+        auto other = read_first_line(LOCK_FILE);
+        auto msg   = "unspind is already running" + (other.empty() ? "" : " (PID " + other + ")") +
+                     " - this second instance exits";
+        log_warn(msg);
+        std::cerr << msg << "\n";
+        close(fd);
+        return false;
+    }
+    // The descriptor stays open: the lock lasts as long as this process.
+    auto pid = std::to_string(getpid()) + "\n";
+    if (ftruncate(fd, 0) != 0 || write(fd, pid.data(), pid.size()) != (ssize_t)pid.size())
+        log_debug("Cannot write the PID to " + LOCK_FILE);
+    return true;
+}
+
 int main(int argc, char* argv[]) {
     // Honor explicit modes on mkdir/open without inherited-umask masking;
     // directory creation relies on this to produce 0777 rather than 0755.
@@ -2937,6 +2969,9 @@ int main(int argc, char* argv[]) {
                       << "           SIGUSR1 to pause, SIGUSR2 to unpause,\n"
                       << "           SIGRTMIN to toggle pause\n";
             return 0;
+        } else {
+            std::cerr << "unspind: unknown option " << argv[i] << " (see --help)\n";
+            return 1;
         }
     }
 
@@ -2947,6 +2982,7 @@ int main(int argc, char* argv[]) {
     open_log();
     if (!_log_stream.is_open())
         std::cerr << "Warning: cannot open log file " << _cfg.log_file << "\n";
+    if (!take_instance_lock()) return 1;
 
     signal(SIGTERM,  sig_handler);
     signal(SIGINT,   sig_handler);
