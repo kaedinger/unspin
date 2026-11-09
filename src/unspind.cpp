@@ -1194,6 +1194,7 @@ struct DiskState {
     std::vector<Suspect> blocked;      // processes waiting for the disk during its spin-up
     int64_t     blocked_scan_ms = 0;   // last scan for them
     std::string blocked_logged;        // last scan's result, logged only when it changes
+    bool        metadata_write = false; // XFS wrote metadata to it during the spin-up
 };
 
 static std::vector<DiskState> _disks;
@@ -1209,6 +1210,7 @@ static int64_t now_ms() {
 }
 
 static void record_wakeup(DiskState& d);   // defined in "Disk wake-ups" below
+static void scan_blocked(DiskState& d);    // defined in "Disk wake-ups" below
 
 static std::unordered_map<std::string, IoCounters> read_diskstats() {
     std::unordered_map<std::string, IoCounters> out;
@@ -1292,6 +1294,7 @@ static void load_disks() {
             d.blocked     = std::move(old->blocked);
             d.blocked_scan_ms = old->blocked_scan_ms;
             d.blocked_logged  = old->blocked_logged;
+            d.metadata_write  = old->metadata_write;
         }
         auto was_spundown = same && old->spundown;
         if (d.spundown && !was_spundown) {
@@ -1304,6 +1307,7 @@ static void load_disks() {
             d.suspects.clear();
             d.blocked.clear();
             d.blocked_logged.clear();
+            d.metadata_write = false;
             log_debug(d.name + " spun down");
         } else if (!d.spundown && was_spundown) {
             log_debug(d.name + " spun up");
@@ -1314,6 +1318,7 @@ static void load_disks() {
                 if (c.reads != d.baseline.reads || c.writes != d.baseline.writes) {
                     d.io_seen  = true;
                     d.io_at_ms = now_ms();
+                    if (_cfg.track_wakeups) scan_blocked(d);   // whoever woke it may still wait
                 }
             }
             // Recorded a moment later: when a path lookup itself needed the disk,
@@ -1331,18 +1336,38 @@ static constexpr int64_t WRITE_LEAD_MS      = 60000;   // a buffered write reach
 static constexpr size_t  SUSPECTS_MAX       = 8;
 
 static void resolve_shfs_suspects(DiskState& d, bool force);   // defined in "Disk wake-ups" below
-static void scan_blocked(DiskState& d);                        // defined in "Disk wake-ups" below
 
 // Called on every main-loop pass and before every promotion: picks up a
 // changed disks.ini, and notices I/O on disks marked as spun down.
 static void update_disk_state() {
+    auto now = now_ms();
+    // I/O on disks marked as spun down. Checked before disks.ini is reloaded:
+    // a disk woken moments after its spin-down may show as awake there already.
+    auto waiting = [](const DiskState& d) { return d.spundown && !d.io_seen; };
+    if (std::any_of(_disks.begin(), _disks.end(), waiting) ||
+        std::any_of(_parity.begin(), _parity.end(), waiting)) {
+        auto io = read_diskstats();
+        auto started = [&](DiskState& d) {
+            if (!waiting(d)) return false;
+            auto it = io.find(d.device);
+            if (it == io.end()) return false;
+            const auto& c = it->second;
+            if (c.reads == d.baseline.reads && c.writes == d.baseline.writes && c.in_flight == 0) return false;
+            d.io_seen  = true;
+            d.io_at_ms = now;
+            log_debug(d.name + " is spinning up");
+            return true;
+        };
+        for (auto& p : _parity) started(p);
+        for (auto& d : _disks)
+            if (started(d) && _cfg.track_wakeups) scan_blocked(d);   // the cause waits for the disk right now
+    }
     struct stat st;
     if (stat(DISKS_INI.c_str(), &st) == 0 &&
         (st.st_mtim.tv_sec != _disks_ini_mtime.tv_sec || st.st_mtim.tv_nsec != _disks_ini_mtime.tv_nsec)) {
         _disks_ini_mtime = st.st_mtim;
         load_disks();
     }
-    auto now = now_ms();
     for (auto& d : _disks) {
         if (d.spundown || d.woke_at_ms) resolve_shfs_suspects(d, false);
         if (_cfg.track_wakeups && d.spundown && d.io_seen && now - d.blocked_scan_ms >= 1000) scan_blocked(d);
@@ -1352,40 +1377,29 @@ static void update_disk_state() {
                                  [&](const Suspect& s) { return now - s.last_ms > SUSPECT_MAX_AGE_MS; }),
                              d.suspects.end());
     }
-    auto waiting = [](const DiskState& d) { return d.spundown && !d.io_seen; };
-    if (std::none_of(_disks.begin(), _disks.end(), waiting) &&
-        std::none_of(_parity.begin(), _parity.end(), waiting)) return;
-    auto io = read_diskstats();
-    auto started = [&](DiskState& d) {
-        if (!waiting(d)) return false;
-        auto it = io.find(d.device);
-        if (it == io.end()) return false;
-        const auto& c = it->second;
-        if (c.reads == d.baseline.reads && c.writes == d.baseline.writes && c.in_flight == 0) return false;
-        d.io_seen  = true;
-        d.io_at_ms = now;
-        log_debug(d.name + " is spinning up");
-        return true;
-    };
-    for (auto& p : _parity) started(p);
-    for (auto& d : _disks)
-        if (started(d) && _cfg.track_wakeups) scan_blocked(d);   // the cause waits for the disk right now
 }
 
-static constexpr int64_t PARITY_WINDOW_MS = 3000;   // parity starts spinning up with the data disk it writes for
+static constexpr int64_t PARITY_WINDOW_MS = 3000;    // parity starts spinning up with the data disk it writes for
+static constexpr int64_t PARITY_LEAD_MS   = 15000;   // or up to one spin-up earlier, for a write to another disk in the same flush
 
-// A parity disk started spinning up together with this disk: a write.
+// A parity disk started spinning up together with this disk, or shortly
+// before it: changes are being written out.
 static bool parity_woke_with(const DiskState& d) {
     return std::any_of(_parity.begin(), _parity.end(), [&](const DiskState& p) {
-        return p.io_at_ms && std::llabs(p.io_at_ms - d.io_at_ms) <= PARITY_WINDOW_MS;
+        auto lead = d.io_at_ms - p.io_at_ms;   // positive: parity started first
+        return p.io_at_ms && lead >= -PARITY_WINDOW_MS && lead <= PARITY_LEAD_MS;
     });
 }
 
 // While a wake-up may be under way, the main loop polls fast so the spin-up
 // start (io_at_ms) is pinned down closely enough to tell suspects apart.
+static constexpr time_t AFTER_SPINDOWN_WATCH_S = 15;   // a disk woken right after its spin-down is back up within seconds
+
 static bool wake_watch_active() {
-    return std::any_of(_disks.begin(), _disks.end(), [](const DiskState& d) {
-        return d.woke_at_ms || (d.spundown && (d.io_seen || !d.suspects.empty()));
+    auto now = time(nullptr);
+    return std::any_of(_disks.begin(), _disks.end(), [&](const DiskState& d) {
+        return d.woke_at_ms ||
+               (d.spundown && (d.io_seen || !d.suspects.empty() || now - d.spundown_at < AFTER_SPINDOWN_WATCH_S));
     });
 }
 
@@ -1579,7 +1593,17 @@ static Suspect describe_process(pid_t pid) {
             return s;
         }
     }
-    if (comm == "smbd") { s.label = s.name = "SMB"; s.smb = true; s.smb_pid = pid; return s; }
+    // Samba names the process serving a client "smbd[10.10.10.3]". comm is cut at
+    // 15 characters, so the address is used (until smbstatus names the user) only
+    // when it's complete.
+    if (comm == "smbd" || comm.rfind("smbd[", 0) == 0) {
+        s.label = s.name = "SMB";
+        auto close = comm.find(']');
+        if (close != std::string::npos && close > 5) s.label += " " + comm.substr(5, close - 5);
+        s.smb = true;
+        s.smb_pid = pid;
+        return s;
+    }
     if (comm == "shfs") {
         s.label = "user share (requester not found)";
         s.name  = "shfs";
@@ -1675,22 +1699,26 @@ static void resolve_shfs_suspects(DiskState& d, bool force) {
     }
 }
 
-// True if any thread of the process is in uninterruptible sleep ("D"). Reads
-// only /proc/<pid>/stat files: a process's command line lives in its memory,
-// and reading it can wait as long as the process itself.
-static bool has_blocked_thread(const std::string& proc_dir) {
+// Whether any thread of the process is in uninterruptible sleep ("D"), told
+// apart for kernel threads. Reads only /proc/<pid>/stat files: a process's
+// command line lives in its memory, and reading it can wait as long as the
+// process itself.
+enum class Blocked { no, process, kernel_thread };
+
+static Blocked blocked_state(const std::string& proc_dir) {
     auto s = read_first_line(proc_dir + "/stat");
     auto p = s.rfind(')');
-    if (p == std::string::npos) return false;
+    if (p == std::string::npos) return Blocked::no;
     std::istringstream ss(s.substr(p + 1));
     char state;
     long skip;
     unsigned long flags = 0;
     ss >> state >> skip >> skip >> skip >> skip >> skip >> flags;
-    if (flags & 0x00200000) return false;   // PF_KTHREAD: a kernel thread
-    if (state == 'D') return true;
+    if (flags & 0x00200000)   // PF_KTHREAD: a kernel thread
+        return state == 'D' ? Blocked::kernel_thread : Blocked::no;
+    if (state == 'D') return Blocked::process;
     DIR* tasks = opendir((proc_dir + "/task").c_str());
-    if (!tasks) return false;
+    if (!tasks) return Blocked::no;
     bool found = false;
     struct dirent* te;
     while (!found && (te = readdir(tasks)) != nullptr) {
@@ -1700,7 +1728,7 @@ static bool has_blocked_thread(const std::string& proc_dir) {
         found = q != std::string::npos && q + 2 < t.size() && t[q + 2] == 'D';
     }
     closedir(tasks);
-    return found;
+    return found ? Blocked::process : Blocked::no;
 }
 
 // What a waiting process waits for, from the kernel stacks of its waiting
@@ -1755,6 +1783,17 @@ static BlockedOp blocked_op(const std::string& proc_dir) {
     return out;
 }
 
+// A kernel thread working for this disk's array device: its name ends with
+// "/md2p1" (or "/md2" before Unraid 6.12) for disk2.
+static bool is_disk_kthread(const std::string& comm, const DiskState& d) {
+    if (d.name.rfind("disk", 0) != 0) return false;
+    auto md = "/md" + d.name.substr(4);
+    auto ends = [&](const std::string& s) {
+        return comm.size() >= s.size() && comm.compare(comm.size() - s.size(), s.size(), s) == 0;
+    };
+    return ends(md + "p1") || ends(md);
+}
+
 // A directory listing or a file check on a sleeping disk produces no file
 // event, but the process behind it waits in uninterruptible sleep until the
 // disk has spun up (~11 s). Scanned once a second during the spin-up: waiting
@@ -1774,7 +1813,19 @@ static void scan_blocked(DiskState& d) {
         if (pe->d_name[0] < '0' || pe->d_name[0] > '9') continue;
         auto pid = (pid_t)atol(pe->d_name);
         auto dir = std::string("/proc/") + pe->d_name;
-        if (pid == getpid() || !has_blocked_thread(dir)) continue;
+        if (pid == getpid()) continue;
+        auto blocked = blocked_state(dir);
+        if (blocked == Blocked::no) continue;
+        if (blocked == Blocked::kernel_thread) {
+            // XFS writing metadata changes (its journal, or the changes in place)
+            // to exactly this disk: "kworker/6:2+xfs-sync/md2p1", "xfsaild/md2p1".
+            auto comm = read_first_line(dir + "/comm");
+            if (comm.find("xfs") != std::string::npos && is_disk_kthread(comm, d)) {
+                d.metadata_write = true;
+                seen += " " + comm + "(" + pe->d_name + ") writing metadata";
+            }
+            continue;
+        }
         int rank = 0;
         bool elsewhere = false;   // a path on another disk or pool
         std::string where;
@@ -1833,6 +1884,9 @@ static void note_access(const std::string& path, pid_t pid, uint64_t mask) {
     if (!_cfg.track_wakeups) return;
     auto d = disk_for_path(path);
     if (!d || !(d->spundown || d->woke_at_ms)) return;   // awake: the cheap, common case
+    // Unspin promotes only from a disk that is spinning up or awake: its own
+    // accesses then can't be the cause. Before that they'd be a bug, so they count.
+    if (pid == getpid() && (d->io_seen || !d->spundown)) return;
     const char* access = (mask & (FAN_MODIFY | FAN_CLOSE_WRITE)) ? "writing"
                        : (mask & FAN_ACCESS)                     ? "reading"
                        :                                           "opening";
@@ -1935,8 +1989,10 @@ static void record_wakeup(DiskState& d) {
     if (_cfg.track_wakeups) resolve_shfs_suspects(d, true);
     auto suspects = std::move(d.suspects);
     auto blocked  = std::move(d.blocked);
+    auto metadata_write = d.metadata_write;
     d.suspects.clear();
     d.blocked.clear();
+    d.metadata_write = false;
     if (!_cfg.track_wakeups) return;
 
     // A read or open wakes the disk within moments; only a buffered write
@@ -1970,13 +2026,14 @@ static void record_wakeup(DiskState& d) {
         w.path   = pick->path;
         msg += " by " + pick->label + (pick->detail.empty() ? "" : " (" + pick->detail + ")") +
                " " + pick->access + (pick->path.empty() ? "" : " " + qpath(pick->path));
-    } else if (d.io_seen && parity_woke_with(d)) {
-        // Nobody waited, and parity woke too: a change kept in RAM was written
-        // out later, one without a file write event (times, attributes, a new,
-        // renamed or deleted file or folder).
+    } else if (d.io_seen && (metadata_write || parity_woke_with(d))) {
+        // Nobody waited, and XFS wrote metadata or parity woke too: a change
+        // kept in RAM was written out later, one without a file write event
+        // (times, attributes, a new, renamed or deleted file or folder).
         w.label = "metadata change";
         w.name  = "metadata";
-        msg += " - metadata change written later (times, attributes, create, rename or delete; parity woke too)";
+        msg += std::string(" - metadata change written later (times, attributes, create, rename or delete; ") +
+               (metadata_write ? "XFS wrote it" : "parity woke too") + ")";
     } else if (d.io_seen) {
         w.label = "no file opened";
         w.name  = "dir listing";
