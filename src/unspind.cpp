@@ -186,7 +186,7 @@ static void check_log_size() {
 
 static bool   _log_active     = false; // open_log() was called, so the log file is wanted
 static time_t _log_reopen_at  = 0;     // last reopen attempt after a failed write
-static bool   _log_full_warned = false;
+static bool   _log_full_handled = false; // trimmed/warned once while the log location is full
 
 // A write that ran out of space can leave a partial last line.
 static bool log_ends_mid_line() {
@@ -247,6 +247,33 @@ static std::string qpath(const std::string& path) {
     return out;
 }
 
+static std::string human_size(int64_t bytes);
+
+// The biggest file in a directory and its direct subdirectories, as
+// "name (size)", to point at whatever filled the log location.
+static std::string biggest_file_in(const std::string& dir) {
+    std::string best;
+    off_t best_size = -1;
+    std::vector<std::string> dirs{dir};
+    for (size_t i = 0; i < dirs.size(); ++i) {
+        DIR* d = opendir(dirs[i].c_str());
+        if (!d) continue;
+        while (auto* e = readdir(d)) {
+            std::string name = e->d_name;
+            if (name == "." || name == "..") continue;
+            auto full = dirs[i] + "/" + name;
+            struct stat st;
+            if (lstat(full.c_str(), &st) != 0) continue;
+            if (S_ISDIR(st.st_mode) && i == 0) dirs.push_back(full);
+            else if (S_ISREG(st.st_mode) && st.st_size > best_size) { best_size = st.st_size; best = full; }
+        }
+        closedir(d);
+    }
+    return best.empty() ? "" : best + " (" + human_size(best_size) + ")";
+}
+
+static void rewrite_log_tail(long trim_bytes, bool location_full);
+
 static void trim_log() {
     const auto& path = _cfg.log_file;
 
@@ -256,23 +283,31 @@ static void trim_log() {
     const bool over_size  = (long)st.st_size > max_bytes;
     const double fill_percent = disk_fill_percent(path);
     const bool location_full = fill_percent >= LOG_LOCATION_FULL_PERCENT;
-    if (!location_full) _log_full_warned = false;
-    if (!over_size && !location_full) return;
-
-    // Keep whole lines from the end, up to log_trim_size_mb.
+    if (!location_full) _log_full_handled = false;
     const long trim_bytes = _cfg.log_trim_size_mb * 1024L * 1024L;
 
-    // The location is full, but trimming our own log would free nothing:
-    // other logs filled it. Rewriting the file would only risk losing lines.
-    if (!over_size && (long)st.st_size <= trim_bytes) {
-        if (!_log_full_warned) {
-            _log_full_warned = true;
-            log_warn("Log location of " + path + " is " + std::to_string((int)fill_percent) +
-                     "% full, filled by other logs. Log lines may get lost until space is freed.");
-        }
-        return;
-    }
+    // A full location gets one trim (if our log is over the trim size) and one
+    // warning, then nothing until it drops below the limit again: other logs
+    // filled it and take whatever we free, so trimming again only churns.
+    const bool newly_full = location_full && !_log_full_handled;
+    if (newly_full) _log_full_handled = true;
+    if (over_size || (newly_full && (long)st.st_size > trim_bytes))
+        rewrite_log_tail(trim_bytes, location_full);
 
+    if (newly_full) {
+        auto dir = path.substr(0, path.rfind('/'));
+        if (dir.empty()) dir = "/";
+        auto biggest = biggest_file_in(dir);
+        log_warn("Log location " + dir + " is " + std::to_string((int)fill_percent) +
+                 "% full, filled by other programs" +
+                 (biggest.empty() ? "" : " - biggest file: " + biggest) +
+                 ". Unspin's log stops once it is completely full and resumes when space is freed there.");
+    }
+}
+
+// Keeps whole lines from the end of the log, up to trim_bytes.
+static void rewrite_log_tail(long trim_bytes, bool location_full) {
+    const auto& path = _cfg.log_file;
     std::vector<std::string> lines;
     {
         std::ifstream in(path);
