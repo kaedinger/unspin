@@ -27,6 +27,7 @@
 - new: if the daemon dies unexpectedly, the log says why, and the next start notes the unclean stop
 - fix: Recently Accessed Files shows the date for entries before today, not just the time
 - fix: prevent additional Unspin instances from running
+- fix: a file moved, deleted or changed while Unspin promotes it is never lost or doubled
 - cleaned up code
 
 ### 2026.11.07.56244

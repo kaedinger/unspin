@@ -34,6 +34,8 @@
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/syscall.h>
+#include <sys/sysmacros.h>
 #include <sys/vfs.h>
 #include <unistd.h>
 
@@ -1103,79 +1105,230 @@ static std::string resolve_destination(const std::string& src) {
     return pool_path + src.substr(pool_end);
 }
 
-static bool copy_file(const std::string& src, const std::string& dst) {
-    auto src_fd = open(src.c_str(), O_RDONLY | O_NOATIME);
-    if (src_fd < 0 && errno == EPERM)
-        src_fd = open(src.c_str(), O_RDONLY);
+// A promotion moves a file while other programs may use it: a user may move,
+// delete or save it during the copy. So the move never shows a half-done or
+// stale result, and whatever the user did wins:
+//   1. Copy into a nameless file on the pool (O_TMPFILE). Nobody can see it,
+//      and the kernel drops it if Unspin dies.
+//   2. Take the array file: rename it to a hidden name next to it. From then
+//      on nobody can reach it, so nothing can change under the checks.
+//   3. Check: still the file that was copied, unchanged, and open nowhere.
+//   4. Give the copy its name on the pool, delete the hidden original.
+// Moved or deleted before step 2: the copy is dropped. Changed or open: the
+// file is put back and promoted on a later access. A user action during the
+// microseconds between 2 and 4 gets "not found" and can simply be repeated.
+// The pending step is noted in HANDOVER_FILE, so a restart after a crash in
+// that moment puts the file back or finishes the step.
+
+static const std::string HANDOVER_FILE = "/var/run/unspind.handover";
+static constexpr unsigned RENAME_NOREPLACE_FLAG = 1; // RENAME_NOREPLACE, renameat2(2)
+
+enum class Handover { done, failed, gone, changed, in_use };
+
+static int rename_noreplace(const std::string& from, const std::string& to) {
+    return (int)syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE_FLAG);
+}
+
+// Same file with the same content. ctime is left out after our own rename,
+// which sets it.
+static bool unchanged(const struct stat& a, const struct stat& b, bool with_ctime) {
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size &&
+           a.st_mtim.tv_sec == b.st_mtim.tv_sec && a.st_mtim.tv_nsec == b.st_mtim.tv_nsec &&
+           (!with_ctime || (a.st_ctim.tv_sec == b.st_ctim.tv_sec && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec));
+}
+
+// ".unspin.NAME" next to the file, or ".unspin.INODE" if NAME is too long.
+static std::string hidden_name(const std::string& src, ino_t ino) {
+    auto slash = src.rfind('/');
+    auto base = src.substr(slash + 1);
+    if (base.size() + 8 > NAME_MAX) base = std::to_string(ino);
+    return src.substr(0, slash + 1) + ".unspin." + base;
+}
+
+static void note_handover(const std::string& hidden, const std::string& src, const std::string& dst) {
+    std::ofstream f(HANDOVER_FILE, std::ios::trunc | std::ios::binary);
+    f << hidden << '\0' << src << '\0' << dst << '\0';
+}
+
+static void put_back(const std::string& hidden, const std::string& src) {
+    if (rename_noreplace(hidden, src) != 0)
+        log_err("Cannot put " + qpath(src) + " back (" + strerror(errno) + ") - it is kept as " + qpath(hidden));
+    unlink(HANDOVER_FILE.c_str());
+}
+
+// The process that has the file open or mapped, other than Unspin, as
+// "comm(pid)", or "". Matches the unique hidden name in the fd links (plain
+// text, no file system access: a stat() through a FUSE file could wake a
+// disk) and confirms the inode; works for containers that see another path.
+static std::string file_holder(const std::string& hidden, dev_t dev, ino_t ino) {
+    auto suffix = hidden.substr(hidden.rfind('/'));
+    char dev_s[32];
+    snprintf(dev_s, sizeof dev_s, "%02x:%02x", major(dev), minor(dev));
+    auto ends_with = [](const std::string& s, const std::string& end) {
+        return s.size() >= end.size() && s.compare(s.size() - end.size(), end.size(), end) == 0;
+    };
+    auto self = std::to_string(getpid());
+    DIR* proc = opendir("/proc");
+    if (!proc) return "";
+    std::string holder;
+    while (auto* e = readdir(proc)) {
+        if (!isdigit((unsigned char)e->d_name[0]) || self == e->d_name) continue;
+        auto base = std::string("/proc/") + e->d_name;
+        auto found = false;
+        if (DIR* fds = opendir((base + "/fd").c_str())) {
+            while (auto* f = readdir(fds)) {
+                if (f->d_name[0] == '.') continue;
+                char link[PATH_MAX];
+                auto n = readlink((base + "/fd/" + f->d_name).c_str(), link, sizeof link - 1);
+                if (n <= 0) continue;
+                link[n] = '\0';
+                if (!ends_with(link, suffix)) continue;
+                std::ifstream info(base + "/fdinfo/" + f->d_name);
+                std::string line;
+                found = true;  // the hidden name is unique; the inode only confirms
+                while (std::getline(info, line))
+                    if (line.rfind("ino:", 0) == 0) { found = strtoull(line.c_str() + 4, nullptr, 10) == ino; break; }
+                if (found) break;
+            }
+            closedir(fds);
+        }
+        if (!found) {
+            std::ifstream maps(base + "/maps");
+            std::string line;
+            while (!found && std::getline(maps, line)) {
+                if (!ends_with(line, suffix)) continue;
+                char mdev[32];
+                unsigned long long mino = 0;
+                found = sscanf(line.c_str(), "%*s %*s %*s %31s %llu", mdev, &mino) == 2 &&
+                        mino == ino && strcmp(mdev, dev_s) == 0;
+            }
+        }
+        if (found) {
+            std::ifstream c(base + "/comm");
+            std::string comm;
+            std::getline(c, comm);
+            holder = comm + "(" + e->d_name + ")";
+            break;
+        }
+    }
+    closedir(proc);
+    return holder;
+}
+
+// Moves src on the array to dst on its pool, as described above. why gets the
+// error for failed, the holder for in_use.
+static Handover move_to_cache(const std::string& src, const std::string& dst, std::string& why) {
+    int src_fd = open(src.c_str(), O_RDONLY | O_NOATIME | O_CLOEXEC);
+    if (src_fd < 0 && errno == EPERM) src_fd = open(src.c_str(), O_RDONLY | O_CLOEXEC);
     if (src_fd < 0) {
-        log_err("open(" + src + "): " + strerror(errno));
-        return false;
+        if (errno == ENOENT) return Handover::gone;
+        why = "open(" + src + "): " + strerror(errno);
+        return Handover::failed;
     }
-
-    struct stat st;
-    if (fstat(src_fd, &st) < 0) {
-        log_err("fstat(" + src + "): " + strerror(errno));
+    int tmp_fd = -1;
+    auto end = [&](Handover h, std::string w = "") {
+        if (tmp_fd >= 0) close(tmp_fd);
         close(src_fd);
-        return false;
-    }
+        why = std::move(w);
+        return h;
+    };
 
-    auto dir = dst.substr(0, dst.rfind('/'));
-    if (!dir.empty()) mkdir_p(dir);
+    struct stat before;
+    if (fstat(src_fd, &before) < 0) return end(Handover::failed, "fstat(" + src + "): " + strerror(errno));
+    if (access(dst.c_str(), F_OK) == 0) return end(Handover::failed, "destination already exists: " + dst);
 
-    if (access(dst.c_str(), F_OK) == 0) {
-        log_warn("copy_file: destination already exists, skipping: " + dst);
-        close(src_fd);
-        return false;
-    }
+    // The nameless file goes into the deepest existing folder of dst: same file
+    // system as dst (a ZFS share can be its own dataset), and the missing
+    // folders are created only once the move is certain.
+    auto pool_root = dst.substr(0, dst.find('/', MNT_PREFIX.size()));
+    auto tmp_dir = dst.substr(0, dst.rfind('/'));
+    while (tmp_dir.size() > pool_root.size() && access(tmp_dir.c_str(), F_OK) != 0)
+        tmp_dir = tmp_dir.substr(0, tmp_dir.rfind('/'));
+    mode_t mode = (before.st_mode & 0222) ? 0666 : 0444;
+    tmp_fd = open(tmp_dir.c_str(), O_TMPFILE | O_WRONLY | O_CLOEXEC, mode);
+    if (tmp_fd < 0)
+        return end(Handover::failed, "Cannot create a nameless file in " + tmp_dir +
+                                     " for the copy (O_TMPFILE): " + strerror(errno));
 
-    mode_t dst_mode = (st.st_mode & 0222) ? 0666 : 0444;
-    int dst_fd = open(dst.c_str(), O_WRONLY | O_CREAT | O_EXCL, dst_mode);
-    if (dst_fd < 0) {
-        log_err("open(" + dst + "): " + strerror(errno));
-        close(src_fd);
-        return false;
-    }
-
-    auto ok = true;
-    off_t offset    = 0;
-    auto  remaining = st.st_size;
-
+    off_t offset = 0;
+    auto remaining = before.st_size;
     while (remaining > 0) {
-        auto chunk = (size_t)std::min(remaining, (off_t)COPY_CHUNK_BYTES);
-        auto n = sendfile(dst_fd, src_fd, &offset, chunk);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            log_err("sendfile(" + src + "): " + strerror(errno));
-            ok = false;
-            break;
-        }
-        if (n == 0) {
-            log_err("sendfile(" + src + "): unexpected EOF");
-            ok = false;
-            break;
-        }
+        auto n = sendfile(tmp_fd, src_fd, &offset, (size_t)std::min(remaining, (off_t)COPY_CHUNK_BYTES));
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) return end(Handover::failed, "sendfile(" + src + "): " + strerror(errno));
+        if (n == 0) return end(Handover::changed);  // shrank during the copy
         remaining -= n;
     }
 
-    close(src_fd);
-    close(dst_fd);
-    if (!ok) { 
-        unlink(dst.c_str()); 
-        return false; 
+    // Unraid-standard permissions and ownership. Keep the original mtime;
+    // atime = now: the promotion is itself an access, and the array copy's
+    // atime is stale (Unraid mounts disks noatime), which would make Mover
+    // Tuning's ATIME filter demote the file on its next run.
+    fchmod(tmp_fd, mode);
+    if (fchown(tmp_fd, _nobody_uid, _nobody_gid) != 0) log_err("chown(" + dst + "): " + strerror(errno));
+    struct timespec times[2] = { {0, UTIME_NOW}, before.st_mtim };
+    futimens(tmp_fd, times);
+    // On the pool for good before the original goes: else a power cut could lose both.
+    if (fsync(tmp_fd) != 0) return end(Handover::failed, "fsync(" + dst + "): " + strerror(errno));
+
+    struct stat now;
+    if (fstat(src_fd, &now) != 0 || !unchanged(before, now, true)) return end(Handover::changed);
+
+    auto hidden = hidden_name(src, before.st_ino);
+    note_handover(hidden, src, dst);
+    if (rename_noreplace(src, hidden) != 0) {
+        auto err = errno;
+        unlink(HANDOVER_FILE.c_str());
+        if (err == ENOENT) return end(Handover::gone);
+        return end(Handover::failed, "rename(" + src + "): " + strerror(err));
+    }
+    struct stat taken;
+    if (lstat(hidden.c_str(), &taken) != 0 || taken.st_dev != before.st_dev || taken.st_ino != before.st_ino ||
+        fstat(src_fd, &now) != 0 || !unchanged(before, now, false)) {
+        put_back(hidden, src);
+        return end(Handover::changed);
+    }
+    if (auto holder = file_holder(hidden, before.st_dev, before.st_ino); !holder.empty()) {
+        put_back(hidden, src);
+        return end(Handover::in_use, holder);
     }
 
-    // Set Unraid-standard permissions and ownership
-    chmod(dst.c_str(), dst_mode);
-    if (chown(dst.c_str(), _nobody_uid, _nobody_gid) != 0)
-        log_err("chown(" + dst + "): " + strerror(errno));
+    mkdir_p(dst.substr(0, dst.rfind('/')));
+    if (linkat(tmp_fd, "", AT_FDCWD, dst.c_str(), AT_EMPTY_PATH) != 0) {
+        auto err = errno;
+        put_back(hidden, src);
+        return end(Handover::failed, "linkat(" + dst + "): " + strerror(err));
+    }
+    if (unlink(hidden.c_str()) != 0)
+        log_err("unlink(" + hidden + "): " + strerror(errno) +
+                " - the copy at " + dst + " is complete, this leftover can be deleted");
+    unlink(HANDOVER_FILE.c_str());
+    return end(Handover::done);
+}
 
-    // Keep the original mtime. atime = now: the promotion is itself an access,
-    // and the array copy's atime is stale (Unraid mounts disks noatime), which
-    // would make Mover Tuning's ATIME filter demote the file on its next run.
-    struct timespec times[2] = { {0, UTIME_NOW}, st.st_mtim };
-    utimensat(AT_FDCWD, dst.c_str(), times, 0);
-
-    return true;
+// After a crash in the middle of a hand-over: finish it if the copy got its
+// name on the pool, else put the array file back.
+static void recover_handover() {
+    std::ifstream f(HANDOVER_FILE, std::ios::binary);
+    if (!f) return;
+    std::string hidden, src, dst;
+    std::getline(f, hidden, '\0');
+    std::getline(f, src, '\0');
+    std::getline(f, dst, '\0');
+    f.close();
+    struct stat h, d;
+    if (hidden.empty() || src.empty() || dst.empty() || lstat(hidden.c_str(), &h) != 0) {
+        unlink(HANDOVER_FILE.c_str());
+        return;
+    }
+    if (lstat(dst.c_str(), &d) == 0 && d.st_size == h.st_size) {
+        log_warn("Finishing a promotion interrupted by a crash: " + qpath(src) + " is on the pool");
+        if (unlink(hidden.c_str()) != 0) log_err("unlink(" + hidden + "): " + strerror(errno));
+        unlink(HANDOVER_FILE.c_str());
+    } else {
+        log_warn("Undoing a promotion interrupted by a crash: " + qpath(src) + " stays on the array");
+        put_back(hidden, src);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2197,16 +2350,28 @@ static bool promote_file(const std::string& src, int64_t size, const std::string
     log_info("[" + dec.rule + "] Promoting " + qpath(src) + " -> " + dst +
              " (" + human_size(size) + ") - " + dec.reason + tag);
 
-    if (!copy_file(src, dst)) return false;
-
-    if (unlink(src.c_str()) != 0) {
-        log_err("unlink(" + src + "): " + strerror(errno) +
-                " - copy kept at " + dst);
+    std::string why;
+    auto not_yet = access_tag(total_reads, false);
+    switch (move_to_cache(src, dst, why)) {
+    case Handover::done:
+        record_promotion(pool, size);
+        return true;
+    case Handover::gone:
+        log_info("[" + dec.rule + "] Moved or deleted during the promotion, no copy kept: " + qpath(src) + not_yet);
+        return false;
+    case Handover::changed:
+        log_info("[" + dec.rule + "] Changed during the promotion, left on the array for a later access: " +
+                 qpath(src) + not_yet);
+        return false;
+    case Handover::in_use:
+        log_info("[" + dec.rule + "] Open in " + why + ", left on the array for a later access: " +
+                 qpath(src) + not_yet);
+        return false;
+    case Handover::failed:
+        log_err(why);
         return false;
     }
-
-    record_promotion(pool, size);
-    return true;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -2296,6 +2461,7 @@ static PromoteDecision should_promote(const AccessRecord& rec, int64_t size) {
 static void try_promote(const std::string& path, int64_t size, const std::string& sname,
                          AccessRecord& rec, const PromoteDecision& dec) {
     if (rec.promoted) return;
+    rec.pending_promote = false;  // this attempt is the deferred one, too
     if (auto running = transfers_running(); !running.empty()) {
         log_info("[" + dec.rule + "] " + running + " active, deferring: " + path);
         return;
@@ -2739,6 +2905,7 @@ static int init_fanotify() {
 }
 
 static void process_events(int fan_fd) {
+    static const pid_t _self_pid = getpid();
     alignas(fanotify_event_metadata) char buf[FAN_BUF_BYTES];
     auto n = read(fan_fd, buf, sizeof(buf));
     if (n <= 0) return;
@@ -2766,8 +2933,10 @@ static void process_events(int fan_fd) {
                     {FAN_CLOSE_NOWRITE, EvType::CloseNoWrite},
                 };
                 note_access(file_path, meta->pid, meta->mask);
-                for (const auto& [bit, ev] : ORDER)
-                    if (meta->mask & bit) handle_event(file_path, ev);
+                // Unspin's own reads (a promotion's copy) are no access by anyone.
+                if (meta->pid != _self_pid)
+                    for (const auto& [bit, ev] : ORDER)
+                        if (meta->mask & bit) handle_event(file_path, ev);
             }
         }
         if (meta->fd >= 0) 
@@ -3087,6 +3256,7 @@ int main(int argc, char* argv[]) {
     crash_prepare();
     install_crash_handlers();
     log_config();
+    recover_handover();
     init_nobody();
     load_stats();
     load_wakeups();

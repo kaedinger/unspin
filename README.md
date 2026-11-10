@@ -229,10 +229,10 @@ kill -RTMIN  $(cat /var/run/unspind.pid)   # toggle pause
 When a file qualifies for promotion, Unspin
 
 1. looks up the share's `shareCachePool` from `/boot/config/shares/<share>.cfg` and rebases the file path onto that pool (e.g. for share `media` with `shareCachePool=cache`, `/mnt/disk1/media/foo.mkv` -> `/mnt/cache/media/foo.mkv`),
-2. copies data using `sendfile` (zero-copy kernel transfer),
-3. removes the source with `unlink` only after the copy succeeds
+2. copies the file to the pool, invisible until it is complete,
+3. swaps it in place of the array file only if nobody moved, changed, deleted or opened the file in the meantime.
 
-If the copy fails, the source is left untouched and the partial destination is deleted.
+A file is never lost, doubled or left half-copied: whatever you do with it during a promotion wins, and Unspin tries again on a later access. Even a crash in the middle of a promotion is recovered on the next start.
 
 
 ---
