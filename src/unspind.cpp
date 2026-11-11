@@ -52,6 +52,7 @@ static constexpr size_t     FAN_BUF_BYTES        = 65536;              // fanoti
 static constexpr int        MOVER_CACHE_SEC      = 5;                  // how long to cache mover-active result
 static constexpr int        PAUSE_DIR_CACHE_SEC  = 2;                  // how long to cache the pause-lock-directory scan
 static constexpr int        PENDING_PROMOTE_STALE_SEC = 10 * 60;       // force a stuck deferred promotion through after this long with zero events
+static constexpr int        HELD_RETRY_SEC            = 5;             // a file found open elsewhere is checked again at most this often
 static constexpr uint64_t   FAN_WATCH_MASK       = FAN_ACCESS | FAN_OPEN | FAN_CLOSE_NOWRITE
                                                  | FAN_CLOSE_WRITE | FAN_MODIFY;
 static constexpr int64_t    KB                   = 1024;
@@ -140,6 +141,9 @@ struct AccessRecord {
     PromoteDecision    pending_dec;
     bool               promoted        = false;
     bool               has_write_open  = false; // FAN_MODIFY seen while file is open
+    bool               held_elsewhere  = false; // a promotion found it open (open_count can drift, GH #10); waits for a close
+    time_t             held_at         = 0;     // when that was found
+    std::string        held_by;                 // that holder, logged once at INFO
     time_t             asleep_logged   = 0;     // sleep period (spundown_at) of the last "not waking it" INFO line
 };
 
@@ -1107,18 +1111,25 @@ static std::string resolve_destination(const std::string& src) {
 
 // A promotion moves a file while other programs may use it: a user may move,
 // delete or save it during the copy. So the move never shows a half-done or
-// stale result, and whatever the user did wins:
-//   1. Copy into a nameless file on the pool (O_TMPFILE). Nobody can see it,
+// stale result, the file never goes missing from the user share, and
+// whatever the user did wins:
+//   1. Open somewhere: no copy now, the promotion waits for the file's close.
+//   2. Copy into a nameless file on the pool (O_TMPFILE). Nobody can see it,
 //      and the kernel drops it if Unspin dies.
-//   2. Take the array file: rename it to a hidden name next to it. From then
+//   3. Check: unchanged since the copy started, and still open nowhere.
+//   4. Give the copy its name on the pool. shfs looks a file up on every
+//      open and the pool comes first, so from now on the user share shows
+//      the copy (measured: the very next read gets it, no read fails).
+//   5. Take the array file: rename it to a hidden name next to it. From then
 //      on nobody can reach it, so nothing can change under the checks.
-//   3. Check: still the file that was copied, unchanged, and open nowhere.
-//   4. Give the copy its name on the pool, delete the hidden original.
-// Moved or deleted before step 2: the copy is dropped. Changed or open: the
-// file is put back and promoted on a later access. A user action during the
-// microseconds between 2 and 4 gets "not found" and can simply be repeated.
-// The pending step is noted in HANDOVER_FILE, so a restart after a crash in
-// that moment puts the file back or finishes the step.
+//   6. Check again: still the file that was copied, unchanged, open nowhere.
+//   7. Delete the hidden original.
+// Changed or opened between 3 and 5: the array file is put back first, then
+// the copy is removed, so the share never misses the file either; a copy
+// somebody already opened is kept, with an error naming both. Moved or
+// deleted on the array before step 5: the copy is removed, the user's action
+// wins. The pending step is noted in HANDOVER_FILE, so a restart after a
+// crash in that moment finishes it or puts the file back.
 
 static const std::string HANDOVER_FILE = "/var/run/unspind.handover";
 static constexpr unsigned RENAME_NOREPLACE_FLAG = 1; // RENAME_NOREPLACE, renameat2(2)
@@ -1145,23 +1156,34 @@ static std::string hidden_name(const std::string& src, ino_t ino) {
     return src.substr(0, slash + 1) + ".unspin." + base;
 }
 
-static void note_handover(const std::string& hidden, const std::string& src, const std::string& dst) {
+// The paths plus size and mtime of the original, which the copy shares.
+static void note_handover(const std::string& hidden, const std::string& src, const std::string& dst,
+                          const struct stat& orig) {
     std::ofstream f(HANDOVER_FILE, std::ios::trunc | std::ios::binary);
-    f << hidden << '\0' << src << '\0' << dst << '\0';
+    f << hidden << '\0' << src << '\0' << dst << '\0' << orig.st_size << '\0'
+      << orig.st_mtim.tv_sec << '\0' << orig.st_mtim.tv_nsec << '\0';
 }
 
-static void put_back(const std::string& hidden, const std::string& src) {
-    if (rename_noreplace(hidden, src) != 0)
-        log_err("Cannot put " + qpath(src) + " back (" + strerror(errno) + ") - it is kept as " + qpath(hidden));
-    unlink(HANDOVER_FILE.c_str());
+static bool put_back(const std::string& hidden, const std::string& src) {
+    if (rename_noreplace(hidden, src) == 0) return true;
+    log_err("Cannot put " + qpath(src) + " back (" + strerror(errno) + ") - it is kept as " + qpath(hidden));
+    return false;
+}
+
+// Removes the folders made for dst on the pool, up to the deepest one that
+// existed before (only empty ones go).
+static void remove_new_dirs(const std::string& dst, const std::string& existed) {
+    auto dir = dst.substr(0, dst.rfind('/'));
+    while (dir.size() > existed.size() && rmdir(dir.c_str()) == 0)
+        dir = dir.substr(0, dir.rfind('/'));
 }
 
 // The process that has the file open or mapped, other than Unspin, as
-// "comm(pid)", or "". Matches the unique hidden name in the fd links (plain
+// "comm(pid)", or "". Matches the file name at the end of the fd links (plain
 // text, no file system access: a stat() through a FUSE file could wake a
 // disk) and confirms the inode; works for containers that see another path.
-static std::string file_holder(const std::string& hidden, dev_t dev, ino_t ino) {
-    auto suffix = hidden.substr(hidden.rfind('/'));
+static std::string file_holder(const std::string& path, dev_t dev, ino_t ino) {
+    auto suffix = path.substr(path.rfind('/'));
     char dev_s[32];
     snprintf(dev_s, sizeof dev_s, "%02x:%02x", major(dev), minor(dev));
     auto ends_with = [](const std::string& s, const std::string& end) {
@@ -1185,7 +1207,6 @@ static std::string file_holder(const std::string& hidden, dev_t dev, ino_t ino) 
                 if (!ends_with(link, suffix)) continue;
                 std::ifstream info(base + "/fdinfo/" + f->d_name);
                 std::string line;
-                found = true;  // the hidden name is unique; the inode only confirms
                 while (std::getline(info, line))
                     if (line.rfind("ino:", 0) == 0) { found = strtoull(line.c_str() + 4, nullptr, 10) == ino; break; }
                 if (found) break;
@@ -1215,6 +1236,19 @@ static std::string file_holder(const std::string& hidden, dev_t dev, ino_t ino) 
     return holder;
 }
 
+// Removes the copy from the pool again, unless somebody already opened or
+// changed it. False if it had to stay.
+static bool drop_copy(const std::string& dst, const struct stat& copy) {
+    struct stat d;
+    if (lstat(dst.c_str(), &d) != 0 || d.st_dev != copy.st_dev || d.st_ino != copy.st_ino)
+        return true;  // already gone, or no longer ours
+    if (!unchanged(copy, d, false) || !file_holder(dst, d.st_dev, d.st_ino).empty())
+        return false;
+    if (unlink(dst.c_str()) == 0) return true;
+    log_err("unlink(" + dst + "): " + strerror(errno));
+    return false;
+}
+
 // Moves src on the array to dst on its pool, as described above. why gets the
 // error for failed, the holder for in_use.
 static Handover move_to_cache(const std::string& src, const std::string& dst, std::string& why) {
@@ -1238,8 +1272,9 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
     if (access(dst.c_str(), F_OK) == 0) return end(Handover::failed, "destination already exists: " + dst);
 
     // The nameless file goes into the deepest existing folder of dst: same file
-    // system as dst (a ZFS share can be its own dataset), and the missing
-    // folders are created only once the move is certain.
+    // system as dst (a ZFS share can be its own dataset). The missing folders
+    // are created right before the copy gets its name, and removed again if
+    // the promotion steps back.
     auto pool_root = dst.substr(0, dst.find('/', MNT_PREFIX.size()));
     auto tmp_dir = dst.substr(0, dst.rfind('/'));
     while (tmp_dir.size() > pool_root.size() && access(tmp_dir.c_str(), F_OK) != 0)
@@ -1271,63 +1306,116 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
     // On the pool for good before the original goes: else a power cut could lose both.
     if (fsync(tmp_fd) != 0) return end(Handover::failed, "fsync(" + dst + "): " + strerror(errno));
 
-    struct stat now;
-    if (fstat(src_fd, &now) != 0 || !unchanged(before, now, true)) return end(Handover::changed);
+    struct stat copy, now;
+    if (fstat(tmp_fd, &copy) != 0) return end(Handover::failed, "fstat(copy of " + src + "): " + strerror(errno));
+    if (fstat(src_fd, &now) != 0 || !unchanged(before, now, true)) {
+        struct stat at;  // a rename sets ctime, too: moved or deleted, not changed?
+        auto moved = lstat(src.c_str(), &at) != 0 || at.st_dev != before.st_dev || at.st_ino != before.st_ino;
+        return end(moved ? Handover::gone : Handover::changed);
+    }
+    if (auto holder = file_holder(src, before.st_dev, before.st_ino); !holder.empty())
+        return end(Handover::in_use, holder);  // opened during the copy
 
     auto hidden = hidden_name(src, before.st_ino);
-    note_handover(hidden, src, dst);
-    if (rename_noreplace(src, hidden) != 0) {
-        auto err = errno;
+    note_handover(hidden, src, dst, before);
+    auto done_with = [&](Handover h, std::string w = "") {
         unlink(HANDOVER_FILE.c_str());
-        if (err == ENOENT) return end(Handover::gone);
-        return end(Handover::failed, "rename(" + src + "): " + strerror(err));
-    }
-    struct stat taken;
-    if (lstat(hidden.c_str(), &taken) != 0 || taken.st_dev != before.st_dev || taken.st_ino != before.st_ino ||
-        fstat(src_fd, &now) != 0 || !unchanged(before, now, false)) {
-        put_back(hidden, src);
-        return end(Handover::changed);
-    }
-    if (auto holder = file_holder(hidden, before.st_dev, before.st_ino); !holder.empty()) {
-        put_back(hidden, src);
-        return end(Handover::in_use, holder);
-    }
+        return end(h, std::move(w));
+    };
+    // Both copies exist from here until the original is taken; the user share
+    // shows the pool copy.
+    auto both_kept = [&](const std::string& orig) {
+        log_err("Promotion of " + qpath(src) + " stepped back, but the pool copy was already in use - "
+                "both kept: " + qpath(orig) + " and " + qpath(dst));
+    };
 
     mkdir_p(dst.substr(0, dst.rfind('/')));
     if (linkat(tmp_fd, "", AT_FDCWD, dst.c_str(), AT_EMPTY_PATH) != 0) {
         auto err = errno;
-        put_back(hidden, src);
-        return end(Handover::failed, "linkat(" + dst + "): " + strerror(err));
+        remove_new_dirs(dst, tmp_dir);
+        return done_with(Handover::failed, "linkat(" + dst + "): " + strerror(err));
     }
+
+    if (rename_noreplace(src, hidden) != 0) {
+        auto err = errno;
+        if (drop_copy(dst, copy)) remove_new_dirs(dst, tmp_dir);
+        else if (err == ENOENT)
+            log_err(qpath(src) + " was moved or deleted on the array during its promotion, but the pool copy "
+                    "was already in use - it is kept: " + qpath(dst));
+        else both_kept(src);
+        if (err == ENOENT) return done_with(Handover::gone);  // moved or deleted on the array meanwhile
+        return done_with(Handover::failed, "rename(" + src + "): " + strerror(err));
+    }
+
+    struct stat taken;
+    auto same = lstat(hidden.c_str(), &taken) == 0 && taken.st_dev == before.st_dev &&
+                taken.st_ino == before.st_ino && fstat(src_fd, &now) == 0 && unchanged(before, now, false);
+    auto holder = same ? file_holder(hidden, before.st_dev, before.st_ino) : std::string();
+    if (!same || !holder.empty()) {
+        // Original first, so the share never misses the file.
+        if (put_back(hidden, src)) {
+            if (!drop_copy(dst, copy)) both_kept(src);
+            else remove_new_dirs(dst, tmp_dir);
+        }
+        return done_with(same ? Handover::in_use : Handover::changed, holder);
+    }
+
+    // Deleted or moved through the share in the moment both existed: that
+    // reached the pool copy and was meant for this file, so the original goes
+    // either way.
     if (unlink(hidden.c_str()) != 0)
         log_err("unlink(" + hidden + "): " + strerror(errno) +
                 " - the copy at " + dst + " is complete, this leftover can be deleted");
-    unlink(HANDOVER_FILE.c_str());
-    return end(Handover::done);
+    return done_with(Handover::done);
 }
 
-// After a crash in the middle of a hand-over: finish it if the copy got its
-// name on the pool, else put the array file back.
+// After a crash in the middle of a hand-over. Without a pool copy the array
+// file is put back. With both, the one still matching the original's size
+// and mtime goes: the other one holds a change somebody made meanwhile.
 static void recover_handover() {
     std::ifstream f(HANDOVER_FILE, std::ios::binary);
     if (!f) return;
-    std::string hidden, src, dst;
-    std::getline(f, hidden, '\0');
-    std::getline(f, src, '\0');
-    std::getline(f, dst, '\0');
+    std::string field[6];
+    for (auto& s : field) std::getline(f, s, '\0');
     f.close();
-    struct stat h, d;
-    if (hidden.empty() || src.empty() || dst.empty() || lstat(hidden.c_str(), &h) != 0) {
-        unlink(HANDOVER_FILE.c_str());
+    unlink(HANDOVER_FILE.c_str());
+    const auto& hidden = field[0];
+    const auto& src    = field[1];
+    const auto& dst    = field[2];
+    long long size = -1, sec = 0, nsec = 0;
+    try { size = std::stoll(field[3]); sec = std::stoll(field[4]); nsec = std::stoll(field[5]); }
+    catch (...) {}
+    if (hidden.empty() || src.empty() || dst.empty() || size < 0) {
+        log_warn("Unreadable note of an interrupted promotion, nothing changed: " + HANDOVER_FILE);
         return;
     }
-    if (lstat(dst.c_str(), &d) == 0 && d.st_size == h.st_size) {
+    auto original = [&](const struct stat& s) {
+        return s.st_size == size && s.st_mtim.tv_sec == sec && s.st_mtim.tv_nsec == nsec;
+    };
+
+    struct stat o, d;
+    auto hidden_there = lstat(hidden.c_str(), &o) == 0;
+    auto orig = hidden_there ? hidden : src;
+    if (!hidden_there && lstat(src.c_str(), &o) != 0) return;  // finished, or the user moved it
+    if (lstat(dst.c_str(), &d) != 0) {
+        if (hidden_there) {
+            log_warn("Undoing a promotion interrupted by a crash: " + qpath(src) + " stays on the array");
+            put_back(hidden, src);
+        }
+        return;
+    }
+    if (original(o)) {
         log_warn("Finishing a promotion interrupted by a crash: " + qpath(src) + " is on the pool");
-        if (unlink(hidden.c_str()) != 0) log_err("unlink(" + hidden + "): " + strerror(errno));
-        unlink(HANDOVER_FILE.c_str());
+        if (unlink(orig.c_str()) != 0) log_err("unlink(" + orig + "): " + strerror(errno));
+        return;
+    }
+    auto back = !hidden_there || put_back(hidden, src);
+    if (back && original(d)) {
+        log_warn("Undoing a promotion interrupted by a crash: " + qpath(src) + " was changed on the array, it stays there");
+        if (unlink(dst.c_str()) != 0) log_err("unlink(" + dst + "): " + strerror(errno));
     } else {
-        log_warn("Undoing a promotion interrupted by a crash: " + qpath(src) + " stays on the array");
-        put_back(hidden, src);
+        log_err("A promotion interrupted by a crash left two changed copies, both kept: " +
+                qpath(back ? src : hidden) + " and " + qpath(dst));
     }
 }
 
@@ -2336,15 +2424,23 @@ static void flush_stats(bool force = false) {
     }
 }
 
-static bool promote_file(const std::string& src, int64_t size, const std::string& pool,
-                         const PromoteDecision& dec, int total_reads) {
+// holder gets "comm(pid)" for in_use, which the caller logs.
+static Handover promote_file(const std::string& src, int64_t size, const std::string& pool,
+                             const PromoteDecision& dec, int total_reads, std::string& holder) {
     auto dst = resolve_destination(src);
     auto tag = access_tag(total_reads, true);
 
     if (_cfg.dry_run) {
         log_info("[" + dec.rule + "] [DRY RUN] Would promote " +
                  qpath(src) + " -> " + dst + " (" + human_size(size) + ") - " + dec.reason + tag);
-        return true;
+        return Handover::done;
+    }
+
+    // Open somewhere: no copy now (move_to_cache checks again after the copy).
+    struct stat st;
+    if (lstat(src.c_str(), &st) == 0) {
+        holder = file_holder(src, st.st_dev, st.st_ino);
+        if (!holder.empty()) return Handover::in_use;
     }
 
     log_info("[" + dec.rule + "] Promoting " + qpath(src) + " -> " + dst +
@@ -2352,26 +2448,26 @@ static bool promote_file(const std::string& src, int64_t size, const std::string
 
     std::string why;
     auto not_yet = access_tag(total_reads, false);
-    switch (move_to_cache(src, dst, why)) {
+    auto result = move_to_cache(src, dst, why);
+    switch (result) {
     case Handover::done:
         record_promotion(pool, size);
-        return true;
+        break;
     case Handover::gone:
         log_info("[" + dec.rule + "] Moved or deleted during the promotion, no copy kept: " + qpath(src) + not_yet);
-        return false;
+        break;
     case Handover::changed:
         log_info("[" + dec.rule + "] Changed during the promotion, left on the array for a later access: " +
                  qpath(src) + not_yet);
-        return false;
+        break;
     case Handover::in_use:
-        log_info("[" + dec.rule + "] Open in " + why + ", left on the array for a later access: " +
-                 qpath(src) + not_yet);
-        return false;
+        holder = why;
+        break;
     case Handover::failed:
         log_err(why);
-        return false;
+        break;
     }
-    return false;
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -2490,8 +2586,22 @@ static void try_promote(const std::string& path, int64_t size, const std::string
         else             { log_debug(msg); }
         return;
     }
-    if (promote_file(path, size, pool_name, dec, rec.total_reads))
-        rec.promoted = true;
+    std::string holder;
+    auto result = promote_file(path, size, pool_name, dec, rec.total_reads, holder);
+    if (result == Handover::in_use) {
+        // Wait for a close instead of trying again on every read.
+        auto msg = "[" + dec.rule + "] Open in " + holder + ", promoting once it is closed: " +
+                   qpath(path) + access_tag(rec.total_reads, false);
+        if (holder != rec.held_by) { log_info(msg); rec.held_by = holder; }
+        else                       { log_debug(msg); }
+        rec.held_elsewhere  = true;
+        rec.held_at         = time(nullptr);
+        rec.pending_promote = true;
+        rec.pending_dec     = dec;
+        return;
+    }
+    rec.held_by.clear();
+    if (result == Handover::done) rec.promoted = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2506,6 +2616,9 @@ static void handle_event(const std::string& path, EvType ev) {
     for (const auto& sp : _cfg.scan_paths)
         if (path.rfind(sp, 0) == 0) { in_scope = true; break; }
     if (!in_scope) return;
+
+    // Unspin's own hidden name during a hand-over (see hidden_name()).
+    if (path.compare(path.rfind('/') + 1, 8, ".unspin.") == 0) return;
 
     // Already on a known cache pool mount? Config validation rejects cache-pool
     // paths in SCAN_PATHS (see load_config()), but that only catches pools known
@@ -2590,7 +2703,7 @@ static void handle_event(const std::string& path, EvType ev) {
         // Defer promotion while any handle is open. Unlinking the source while a reader
         // (SMB/NFS/local) holds an fd causes the client to lose the file — shfs won't
         // redirect to the cache copy until the next open.
-        if (rec.open_count > 0) {
+        if (rec.open_count > 0 || rec.held_elsewhere) {
             auto first = !rec.pending_promote;
             rec.pending_promote = true;
             rec.pending_dec = dec;
@@ -2635,6 +2748,9 @@ static void handle_event(const std::string& path, EvType ev) {
         if (rec.open_count > 0) rec.open_count--;
         // Clear if done.
         if (rec.open_count == 0) rec.has_write_open = false;
+        // A close may be the holder's: try again, at most every HELD_RETRY_SEC
+        // (promote_stale_pending() catches a close in between).
+        if (rec.held_elsewhere && now - rec.held_at >= HELD_RETRY_SEC) rec.held_elsewhere = false;
 
         if (skip_counting) {
             rec.open_reads = -1;
@@ -2671,7 +2787,7 @@ static void handle_event(const std::string& path, EvType ev) {
             }
 
             // Execute any promotion deferred while the file was open.
-            if (!rec.promoted && rec.pending_promote && rec.open_count == 0) {
+            if (!rec.promoted && rec.pending_promote && rec.open_count == 0 && !rec.held_elsewhere) {
                 PromoteDecision dec = rec.pending_dec;
                 rec.pending_promote = false;
                 try_promote(path, size, sname, rec, dec);
@@ -2717,7 +2833,10 @@ static void promote_stale_pending() {
     if (is_paused()) return;
     auto now = time(nullptr);
     for (auto& [path, rec] : _access_map) {
-        if (!rec.pending_promote || now - rec.last_event < PENDING_PROMOTE_STALE_SEC) continue;
+        if (!rec.pending_promote) continue;
+        // Found open elsewhere: its close may have come between two retries.
+        auto held = rec.held_elsewhere && rec.open_count == 0 && now - rec.held_at >= HELD_RETRY_SEC;
+        if (!held && now - rec.last_event < PENDING_PROMOTE_STALE_SEC) continue;
         // Even the lstat() below could wake a sleeping disk once the inode
         // left the cache. Dropped like a transfer deferral: the next access
         // with the disk awake re-arms it.
@@ -2733,10 +2852,12 @@ static void promote_stale_pending() {
             !sname.empty() && share_promotable(sname)) {
             PromoteDecision dec = rec.pending_dec;
             rec.pending_promote = false;
-            log_info("[" + dec.rule + "] Stale pending promotion (" +
-                     std::to_string(PENDING_PROMOTE_STALE_SEC / 60) +
-                     " min quiet, open_count=" + std::to_string(rec.open_count) +
-                     "), promoting anyway: " + path);
+            rec.held_elsewhere  = false;
+            if (!held)
+                log_info("[" + dec.rule + "] Stale pending promotion (" +
+                         std::to_string(PENDING_PROMOTE_STALE_SEC / 60) +
+                         " min quiet, open_count=" + std::to_string(rec.open_count) +
+                         "), promoting anyway: " + path);
             try_promote(path, (int64_t)st.st_size, sname, rec, dec);
         } else {
             rec.pending_promote = false; // gone, no longer a regular file, or no longer promotable

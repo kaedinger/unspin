@@ -232,7 +232,7 @@ When a file qualifies for promotion, Unspin
 2. copies the file to the pool, invisible until it is complete,
 3. swaps it in place of the array file only if nobody moved, changed, deleted or opened the file in the meantime.
 
-A file is never lost, doubled or left half-copied: whatever you do with it during a promotion wins, and Unspin tries again on a later access. Even a crash in the middle of a promotion is recovered on the next start.
+A file is never lost, doubled, left half-copied or missing from the share, not even for a moment: whatever you do with it during a promotion wins, and Unspin tries again on a later access. Even a crash in the middle of a promotion is recovered on the next start.
 
 
 ---
