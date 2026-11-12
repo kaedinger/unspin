@@ -74,7 +74,7 @@ There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mo
 ### Manual
 
 ```bash
-plugin install https://raw.githubusercontent.com/kaedinger/unspin/main/unspin.plg
+plugin install https://github.com/kaedinger/unspin/releases/latest/download/unspin.plg
 ```
 
 ---
