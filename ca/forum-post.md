@@ -34,7 +34,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 - **Disk Wake-ups** - which program, container, VM or SMB client (user and IP) woke which disk, with counts per day and the latest wake-ups. Access through user shares is traced back to the program that asked for the file. Directory listings, name lookups and metadata writes are named as such
 - **Promotion statistics** - files and size moved to each pool today, per day on average and in total
 - **Mover / rsync aware** - pauses while Unraid's mover (including Mover Tuning) or, optionally, any rsync runs
-- **Pause locks for backups** - stackable `rc.unspin pause NAME`, optionally with a time to live so a crashed backup job can't leave Unspin paused forever
+- **Named pause locks for backups** - stackable `rc.unspin pause NAME`, optionally timed (`--ttl 15m`) so a crashed backup job can't leave Unspin paused forever
 - **Pool Access Times** - turns on access times for the pools Unspin promotes into, so Mover Tuning's "Use ATIME" filter can demote files that haven't been read for a while
 - **ZFS array disks** - dataset-per-share mounts are detected and watched automatically
 - **Waits for slow mounts at boot**, with an Unraid notification if it has to
@@ -70,7 +70,24 @@ borg create ssh://root@nas/mnt/disk1/backups::daily /data
 ssh root@nas /etc/rc.d/rc.unspin unpause borgbackup
 ```
 
-Locks stack - multiple backup tools can pause independently. For long jobs, use `pause borgbackup --ttl 15m` and repeat it every few minutes while the job runs; if the job dies, the lock expires on its own.
+Each lock has a name, and locks stack - multiple backup tools can pause independently, and Unspin only resumes once all of them are released. `rc.unspin status` lists the locks currently held.
+
+### Locks that expire
+
+A normal lock stays until it's released, so if the job that set it dies (killed, crashed, its VM stopped mid-run), Unspin stays paused until you unpause it or reboot. To avoid that, give the lock a time to live and refresh it while the job runs:
+
+```
+ssh root@nas /etc/rc.d/rc.unspin pause mybackup --ttl 15m
+# ... during the job, every 5 minutes:
+ssh root@nas /etc/rc.d/rc.unspin pause mybackup --ttl 15m
+# ... at the end:
+ssh root@nas /etc/rc.d/rc.unspin unpause mybackup
+```
+
+- Calling `pause` again with the same name refreshes the lock; `pause mybackup` without `--ttl` makes it permanent again.
+- Times are a number with `s`, `m`, `h` or `d` (e.g. `90s`, `15m`, `2h`, `1d`).
+- A lock that isn't refreshed in time is removed and logged as `Pause lock expired - mybackup`.
+- `rc.unspin status` shows how long each of these locks has left.
 
 ## Requirements
 
