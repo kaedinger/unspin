@@ -19,83 +19,86 @@
 >
 
 <CHANGES>
+### next
+- docs: clearer wording in changelog, README and help texts
+
 ### 2026.11.12.54597
-- new: Disk Wake-ups shows which program, container, VM or SMB client woke a sleeping disk
+- feat: Disk Wake-ups shows which program, container, VM or SMB client woke a sleeping disk
 - fix: Unspin can no longer wake a sleeping disk, even in rare cases, i.e. a file read from RAM or check for ZFS datasets
-- fix: when the log location (/var/log) ran full because of other logs, Unspin stopped logging for good and rewrote its own log every minute without freeing anything. It now resumes logging once space is free again, starts on a fresh line after a cut-off line, and logs one warning that the location is full
+- fix: handle a full /var/log gracefully
 - fix: a file could miss its promotion when the kernel merged its events
-- new: if the daemon dies unexpectedly, the log says why, and the next start notes the unclean stop
+- feat: if the daemon dies unexpectedly, the log says why, and the next start notes the unclean stop
 - fix: Recently Accessed Files shows the date for entries before today, not just the time
 - fix: prevent additional Unspin instances from running
-- fix: a file moved, deleted, changed or still open elsewhere while Unspin promotes it is never lost, doubled or missing from the share
+- fix: a file changed during its promotion is never lost or doubled
 - cleaned up code
 
 ### 2026.11.07.56244
-- fix: unspind could crash when a program ended at the very moment it was checked for the Mover
+- fix: unspind could crash while looking for the Mover among the running programs, if one of them exited during the check
 - fix: an invalid number in the settings no longer stops unspind on a reload; the previous value is kept and a warning logged
 
 ### 2026.11.05.60628
-- feat: promotion statistics on the settings page - files and size moved to the cache pools today, average per day and in total. One summary line (summed over all pools) that folds out to a table per pool, with a reset button. Kept in RAM and saved to /boot/config/plugins/unspin/stats at most once an hour and when the daemon stops
-- feat: the Detected Shares list folds into one summary line with share counts; click it to show the shares. Both foldable sections remember their state per browser
+- feat: promotion statistics per pool on the settings page
+- feat: Detected Shares folds into a summary line
 - cosmetics: Pool Fill Limits rows no longer reach past the settings column
-- feat: pause locks can expire - rc.unspin pause NAME --ttl 15m removes the lock if it isn't refreshed (by calling pause again) within that time, so a backup job that dies mid-run no longer leaves Unspin paused. rc.unspin status shows the time left (GH #13)
-- fix: Unspin no longer recognized a running Mover Tuning 2026.10.30 (which runs as bash under the name mover) and watched everything it moved. The mover is now detected through /var/run/mover.pid, or a process whose name or command starts with mover
-- feat: the status on the settings page and rc.unspin status now also show a pause while the Mover or rsync runs, or by signal - before, only pause locks were shown. The log names which one started or finished
-- fix: installed files were owned by uid/gid 1001 (the build machine's user) instead of root; the package now stores root:root
+- feat: pause locks can expire (rc.unspin pause NAME --ttl 15m) (GH #13)
+- fix: detect the Mover of Mover Tuning 2026.10.30
+- feat: status also shows pauses by Mover, rsync or signal
+- fix: installed files are owned by root
 
 ### 2026.10.17.48740
-- fix: ZFS pools were measured as nearly empty when shares are child datasets, so Pool Fill Limits never applied and the settings page showed 0% used. ZFS pool usage now comes from `zfs get used,available` (GH #11)
-- non-ZFS pool fill is now calculated like `df` (reserved blocks excluded)
-- promoted files now get the promotion time as their access time (modification time is still kept), so Mover Tuning's ATIME filter no longer demotes them on its next run (GH #9)
-- new setting Pool Access Times (ENABLE_POOL_ATIME, default off): turns access times on for the pools Unspin promotes into, for Mover Tuning's Use ATIME filter. Btrfs/XFS pools are remounted relatime and re-applied after every array start; ZFS datasets get atime=on relatime=on (untested). Switching it off undoes only Unspin's own changes, now or at the next array start (GH #9)
-- the once-a-minute checks (new ZFS share mounts on array disks, pool access times) now also run on busy servers; before, they only ran after 5 seconds without any file activity
-- a deferred promotion stuck on a file Unspin wrongly thinks is still open now goes through after 10 minutes without activity (was 30), checked every minute instead of hourly, so it no longer takes 30-90 minutes (GH #10)
-- debug log: closes of a file that still has other handles open are now logged with the remaining open count, so a miscounted open/close shows up in the log
+- fix: correct usage for ZFS pools with child datasets (GH #11)
+- non-ZFS pool fill is calculated like df
+- promoted files are no longer demoted right away by Mover Tuning's ATIME filter (GH #9)
+- new setting Pool Access Times, for Mover Tuning's ATIME filter (GH #9)
+- the once-a-minute checks also run on busy servers
+- a stuck deferred promotion goes through after 10 minutes (GH #10)
+- debug log: closes of a file that still has other handles open are now logged with the remaining open count
 
 ### 2026.09.20.50926
-- install: pluginURL now points at the latest GitHub release asset instead of a copy on main, so update checks always match the exact build that was hashed and uploaded
+- install: pluginURL points at the latest GitHub release
 
 ### 2026.09.18.38737
-- ci: release workflow now pushes the SHA256-corrected unspin.plg back to main after building, so the live pluginURL no longer serves a stale hash that silently fails install verification
+- ci: release workflow pushes the corrected SHA256 to main
 
 ### 2026.09.14.59405
-- fix: a promotion could get stuck forever if a file's open/close counts drifted out of sync (e.g. repeated Explorer opens over SMB); now promotes anyway after 30 min of inactivity
-- install: plugin download is now verified against a declared SHA256 and cached on the flash, instead of an unverified fetch to /tmp on every boot (required by Community Applications); removing the plugin does not delete the cached package - it stays on the flash alongside the preserved config
-- pkg: `make package` now computes and writes that SHA256 into unspin.plg automatically so it can't drift from the shipped file
-- fix: shares on ZFS array disks were invisible to promotion since each is its own dataset/mount that fanotify's disk-level watch doesn't cross; now marks those nested mounts too, at startup and periodically (GH #8)
+- fix: promotions no longer get stuck when open/close counts drift
+- install: plugin download verified by SHA256 and cached on the flash
+- pkg: `make package` now computes and writes that SHA256 into unspin.plg automatically
+- fix: shares on ZFS array disks are promoted (GH #8)
 
 ### 2026.07.28.37749
-- fix: Scan Paths now rejects cache pool mounts, not just the share mount, both in the settings page and the daemon's own config validation
-- install: drop one-time `removepkg Unspin` migration line (legacy capital-U package name cleanup, no longer needed)
-- fix: race condition left the daemon unpaused despite active locks on two rc.unspin pause calls close together; daemon now polls pause-lock directory itself
-- fix: rc.unspin usage/help text implied every subcommand takes a lock name; start/stop/restart/status take none and toggle's name is optional
-- docs: note that "Exclude skipped shares" only filters the browser view - it shows nothing unless "Include excluded shares in Debug log" is also enabled
+- fix: Scan Paths rejects cache pool mounts
+- install: drop one-time `removepkg Unspin` migration line
+- fix: two quick pause calls could leave the daemon unpaused
+- fix: rc.unspin help shows which commands take a lock name
+- docs: "Exclude skipped shares" needs "Include excluded shares in Debug log"
 - feat: "5 Recently Accessed Files" panels now show a time column for each entry
 - fix: recent-files panels now collapse to a single column on narrow or portrait screens
 - feat: Activity Log shows up to 1000 lines in Debug mode (was 200)
 - feat: prevent "Exclude skipped shares" show nothing in flooded log by doing actual log filtering
 
 ### 2026.07.10.38411
-- fix: on slow boots (arrays/ZFS pools can take 20-30 min to mount) the daemon can now wait for each scan path to actually mount before adding the fanotify watch (GH #3)
-- feat: configurable mount wait - MOUNT_WAIT_TIMEOUT_MINS (default 45, 0 disables) and MOUNT_RETRY_INTERVAL_SECS (default 30), also available on the settings page
-- feat: Unraid notifications - a warning while waiting for storage, a notice when all scan paths mount, and an alert if the wait times out
-- fix: a scan path is now considered ready only when it is a genuine mount point, avoiding accidentally watching the root filesystem
+- fix: wait for scan paths to mount on slow boots (GH #3)
+- feat: configurable mount wait timeout and retry interval
+- feat: Unraid notifications while waiting for storage
+- fix: a scan path counts as ready only once it is mounted
 - fix: log trimming is size-based, checked continuously; prevent out of memory errors
 - fix: log also trims when its disk is nearly full, and keeps checking on schedule while paused
-- fix: switching Log Level to Debug and hitting Apply could crash the settings page with an out-of-memory error on a large log; recent-files panel also now shows/hides immediately without a reload
+- fix: settings page crash when switching to Debug on a large log
 - feat: on debug logging, the settings page now shows condensed "5 Recently Accessed Files" panels per watched disk (GH #4)
 - feat: new checkbox to exclude skipped shares from both these panels and the log view (GH #4)
-- feat: new "Include excluded shares in Debug log" setting (default No) is used to prevent noisy skipped shares pushing Recent Files out of the log's retention window
-- fix: the daemon now actually looks up the nobody user's uid/gid at startup instead of using hardcoded Unraid values
+- feat: new setting Include excluded shares in Debug log
+- fix: look up the nobody user's uid/gid instead of hardcoding it
 - fix: log an error if that lookup fails or if a chown on a created directory or promoted file fails
 - refactor: move duplicate config/share-parsing helpers (load_cfg, daemon_running, share detection) to shared include
-- docs: document the new mount-wait/log-trim/rsync-pause settings, note Mover Tuning also pauses via PAUSE_ON_RSYNC, update Project Structure
+- docs: document the mount-wait, log-trim and rsync-pause settings
 
 ### 2026.04.29.43847
 - docs: fix plugin title rendering in README (broken bold markdown)
 
 ### 2026.04.29.42607
-- fix: plugin name attribute lowercased to match install dir so Unraid renders README.md on the Plugins page (was falling back to plain bold name due to case mismatch)
+- fix: README shows on the Plugins page
 - pkg: TXZ filename lowercased to unspin-VERSION-x86_64-1.txz
 - install: one-time removepkg of legacy capital-U package on upgrade to keep slackware pkg db clean
 
@@ -111,15 +114,15 @@
 ### 2026.04.28.71931
 - ci: accept YYYY.MM.DD.SECS-dev tags, publish as GitHub prereleases for staged testing
 - feat: per-share routing - promotion destinations now come from each share's shareCachePool; HOT_PATH removed
-- feat: per-pool fill thresholds - MAX_FILL_PERCENT_pool replaces the single MAX_HOT_FILL_PERCENT; legacy value migrates as a seed on first UI save
+- feat: per-pool fill thresholds - MAX_FILL_PERCENT_pool replaces the single MAX_HOT_FILL_PERCENT; legacy value migration
 - ui: cosmetics
 - daemon: skip shares unless shareUseCache is yes or prefer and a cache pool is configured
 - init: rc.unspin stop also kills orphan unspind processes not tracked in the pidfile
 - docs: add README.md shown on the Unraid plugin page
 
 ### 2026.04.23.50591
-- fix: hot-path directories created during promotion ended up 0755 instead of 0777 because the daemon inherited the init script's umask; daemon now clears umask at startup so explicit modes on mkdir/open are honored
-- ui: paused status now shows the pause reason (e.g. "Running (Paused: mover, rsync)") instead of just "Running (Paused)"
+- fix: directories created by a promotion get mode 0777
+- ui: paused status shows the reason
 - ui: footer label renames; fix stray closing tag and stale tooltip
 
 ### 2026.04.03.44482
@@ -131,7 +134,7 @@
 
 ### 2026.04.02.55974
 - fix: human_size used decimal (1e6) while parse_size used binary (1024) units — now both use binary
-- fix: open/close tracking during pause/rsync — close events were swallowed, leaving open_count inflated and blocking promotion
+- fix: a pause or rsync could block later promotions
 - log full config on SIGHUP reload, not just watched mounts
 - docs: add remote pause/unpause section for backup scripts
 

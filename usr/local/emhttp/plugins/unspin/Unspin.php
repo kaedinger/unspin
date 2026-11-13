@@ -434,7 +434,7 @@ dt.hf-share-name {
       <span>min</span>
       <span class="hf-reset" onclick="hfReset('MOUNT_WAIT_TIMEOUT_MINS')" title="Reset to default">&#x21ba;</span>
     </div>
-    <div class="hf-help">On a slow boot the array - especially ZFS pools - can take <strong>20-30 minutes</strong> to mount. Rather than start with nothing to watch, Unspin waits up to this many minutes for each scan path to mount, raising respective Unraid notifications. <code>0</code> disables waiting (skip missing mounts immediately). <strong>Default: 45.</strong></div>
+    <div class="hf-help">On a slow boot the array - especially ZFS pools - can take <strong>20-30 minutes</strong> to mount. Unspin waits up to this many minutes for each scan path to mount, raising respective Unraid notifications. <code>0</code> disables waiting (skip missing mounts immediately). <strong>Default: 45.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Mount Retry Interval</dt>
