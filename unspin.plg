@@ -21,6 +21,7 @@
 <CHANGES>
 ### next
 - docs: clearer wording in changelog, README and help texts
+- feat: promotions don't push other data out of RAM
 
 ### 2026.11.12.54597
 - feat: Disk Wake-ups shows which program, container, VM or SMB client woke a sleeping disk

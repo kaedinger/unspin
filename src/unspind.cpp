@@ -44,6 +44,7 @@
 // ---------------------------------------------------------------------------
 
 static constexpr size_t     COPY_CHUNK_BYTES     = 1u << 20;           // 1 MiB per sendfile call
+static constexpr off_t      COPY_DROP_BYTES      = 32 << 20;           // copied data leaves RAM every 32 MiB
 static constexpr int        CLEANUP_INTERVAL_SEC = 3600;               // 1 h between access-map cleanups
 static constexpr int        PERIODIC_CHECK_INTERVAL_SEC = 60;          // new dataset mounts, pool access times, stale pending promotions
 static constexpr int        POLL_TIMEOUT_MS      = 5000;               // fanotify poll wait
@@ -1285,7 +1286,11 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
         return end(Handover::failed, "Cannot create a nameless file in " + tmp_dir +
                                      " for the copy (O_TMPFILE): " + strerror(errno));
 
-    off_t offset = 0;
+    // The copy's pages are written out and dropped from RAM as it goes, so a
+    // promotion doesn't push other cached data out (above all the array disks'
+    // directory blocks, whose loss means a spin-up on the next listing). The
+    // original's pages go with it when it's removed.
+    off_t offset = 0, dropped = 0;
     auto remaining = before.st_size;
     while (remaining > 0) {
         auto n = sendfile(tmp_fd, src_fd, &offset, (size_t)std::min(remaining, (off_t)COPY_CHUNK_BYTES));
@@ -1293,6 +1298,12 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
         if (n < 0) return end(Handover::failed, "sendfile(" + src + "): " + strerror(errno));
         if (n == 0) return end(Handover::changed);  // shrank during the copy
         remaining -= n;
+        if (offset - dropped >= COPY_DROP_BYTES) {
+            sync_file_range(tmp_fd, dropped, offset - dropped,
+                            SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER);
+            posix_fadvise(tmp_fd, dropped, offset - dropped, POSIX_FADV_DONTNEED);
+            dropped = offset;
+        }
     }
 
     // Unraid-standard permissions and ownership. Keep the original mtime;
@@ -1305,6 +1316,7 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
     futimens(tmp_fd, times);
     // On the pool for good before the original goes: else a power cut could lose both.
     if (fsync(tmp_fd) != 0) return end(Handover::failed, "fsync(" + dst + "): " + strerror(errno));
+    posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_DONTNEED);
 
     struct stat copy, now;
     if (fstat(tmp_fd, &copy) != 0) return end(Handover::failed, "fstat(copy of " + src + "): " + strerror(errno));
