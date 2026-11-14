@@ -430,10 +430,23 @@ static std::string path_share_name(const std::string& path) {
 static void parse_cfg_into(const std::string& path,
                            std::unordered_map<std::string, std::string>& raw);
 
-// Load /boot/config/shares/*.cfg into _shares
+// Share names from emhttpd's shares.ini (in RAM, sections like ["name"]). A .cfg on the
+// flash can outlive its share; Unraid ignores those, so we do too. Empty if unreadable.
+static std::unordered_set<std::string> existing_shares() {
+    std::unordered_set<std::string> out;
+    std::ifstream f("/var/local/emhttp/shares.ini");
+    std::string line;
+    while (std::getline(f, line))
+        if (line.size() > 4 && line.compare(0, 2, "[\"") == 0 && line.compare(line.size() - 2, 2, "\"]") == 0)
+            out.insert(line.substr(2, line.size() - 4));
+    return out;
+}
+
+// Load /boot/config/shares/*.cfg of existing shares into _shares
 static void load_share_settings() {
     _shares.clear();
     const std::string dir = "/boot/config/shares";
+    auto existing = existing_shares();  // empty: no list yet (early boot), take every .cfg
     DIR* d = opendir(dir.c_str());
     if (!d) return;
     struct dirent* ent;
@@ -443,6 +456,7 @@ static void load_share_settings() {
             continue;
 
         auto share = fname.substr(0, fname.size() - 4);
+        if (!existing.empty() && !existing.count(share)) continue;
         std::unordered_map<std::string, std::string> raw;
         parse_cfg_into(dir + "/" + fname, raw);
         if (raw.empty()) continue;

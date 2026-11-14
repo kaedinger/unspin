@@ -265,13 +265,18 @@ function daemon_running() {
 }
 
 // Parse /boot/config/shares/*.cfg -> ['share' => ['use_cache'=>..,'cache_pool'=>..]].
+// Only shares emhttpd lists in shares.ini: a .cfg can outlive its share (same rule as unspind).
 function load_unraid_shares() {
     $out = [];
     $dir = '/boot/config/shares';
     if (!is_dir($dir)) return $out;
+    $ini = @parse_ini_file('/var/local/emhttp/shares.ini', true);
+    $existing = is_array($ini) ? $ini : [];
     foreach (glob("$dir/*.cfg") as $path) {
+        $name = basename($path, '.cfg');
+        if ($existing && !isset($existing[$name])) continue;
         $c = load_cfg($path);
-        $out[basename($path, '.cfg')] = ['use_cache' => $c['shareUseCache'] ?? '', 'cache_pool' => $c['shareCachePool'] ?? ''];
+        $out[$name] =['use_cache' => $c['shareUseCache'] ?? '', 'cache_pool' => $c['shareCachePool'] ?? ''];
     }
     ksort($out);
     return $out;
