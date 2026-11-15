@@ -12,7 +12,8 @@ const UNSPIN_CH_TTL    = 3600;
 function channel_urls() {
     return [
         'stable' => UNSPIN_REPO . '/releases/latest/download/unspin.plg',
-        'beta'   => UNSPIN_REPO . '/releases/download/beta-channel/unspin.plg',
+        // releases are immutable, so the rolling beta .plg lives on the `channel` branch
+        'beta'   => 'https://raw.githubusercontent.com/kaedinger/unspin/channel/unspin.plg',
     ];
 }
 
