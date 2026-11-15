@@ -46,7 +46,7 @@ if (file_exists($plg_file)) {
         $version = $m[1];
 }
 // CI points the pluginURL of beta builds at the beta channel
-$channel = (isset($plg) && strpos($plg, '/releases/download/beta-channel/unspin.plg') !== false) ? 'beta' : 'stable';
+$channel = (isset($plg) && strpos($plg, 'raw.githubusercontent.com/kaedinger/unspin/channel/unspin.plg') !== false) ? 'beta' : 'stable';
 
 $is_running = daemon_running();
 $pause_locks = pause_reasons();

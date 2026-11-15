@@ -19,7 +19,8 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VER: ${{ github.ref_name }}
-      BETA_URL: https://github.com/kaedinger/unspin/releases/download/beta-channel/unspin.plg
+      # releases are immutable, so the rolling beta .plg lives on the `channel` branch
+      BETA_URL: https://raw.githubusercontent.com/kaedinger/unspin/channel/unspin.plg
 
     steps:
       # build what the tag points to (a -beta tag sits on the beta branch);
@@ -57,11 +58,7 @@ jobs:
 
       - name: Update the beta channel
         if: ${{ endsWith(github.ref_name, '-beta') }}
-        run: |
-          set -euo pipefail
-          gh release view beta-channel >/dev/null 2>&1 || gh release create beta-channel --prerelease --latest=false \
-            --target "$GITHUB_SHA" --title "Beta channel" --notes "Holds the newest beta unspin.plg. Installed betas check this for updates."
-          gh release upload beta-channel unspin.plg --clobber
+        run: 'bash .github/publish-channel.sh unspin.plg "beta channel $VER"'
 
       # beta has the same content as this stable release: the beta channel gets it too, same number.
       # beta has more: leave the beta channel alone, beta users get the fixes with the next beta.
@@ -82,6 +79,4 @@ jobs:
               -e "s|^### $VER$|### $VER\n- Beta channel: identical to stable release $VER|" \
               unspin.plg > beta/unspin.plg
           grep -E 'ENTITY (version|pluginURL)|Beta channel:' beta/unspin.plg
-          gh release view beta-channel >/dev/null 2>&1 || gh release create beta-channel --prerelease --latest=false \
-            --target "$GITHUB_SHA" --title "Beta channel" --notes "Holds the newest beta unspin.plg. Installed betas check this for updates."
-          gh release upload beta-channel beta/unspin.plg --clobber
+          bash .github/publish-channel.sh beta/unspin.plg "beta channel, stable $VER"
