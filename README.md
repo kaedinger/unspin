@@ -77,6 +77,22 @@ There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mo
 plugin install https://github.com/kaedinger/unspin/releases/latest/download/unspin.plg
 ```
 
+### Stable and beta channel
+
+New features come out as betas first. The switch at the bottom right of the settings page shows the newest version on each channel and moves you between them:
+
+- **Switch:** move the slider to the other channel and click **Switch**. A note tells you what changes, then the version from that channel is installed. From then on, the Plugins page offers you updates from that channel only.
+- **Update:** when your own channel has a newer version, it's shown in red and the button turns into **Update**.
+- **Every stable release reaches the beta channel too**, either under the same number or inside the next beta. Beta users never miss a fix.
+- **Settings stay** when you switch. Going back to stable drops settings that only exist in the beta the next time you save; they come back with their defaults if you switch to beta again.
+- **Community Applications:** on the beta channel, CA doesn't list Unspin under *Installed Apps*, because CA only recognizes the stable version. Unspin keeps working and updating as usual; manage it on the Plugins page.
+
+To install the beta directly:
+
+```bash
+plugin install https://raw.githubusercontent.com/kaedinger/unspin/channel/unspin.plg
+```
+
 ---
 
 ## Project Structure
@@ -97,6 +113,7 @@ unspin/
         │   ├── include/
         │   │   ├── exec.php            # POST action handler (save/start/stop/etc.)
         │   │   ├── cfg.php             # Shared config/share-parsing helpers
+        │   │   ├── channel.php         # Release channels: installed channel, newest versions
         │   │   └── log_scan.php        # Shared log-tail/scan helpers
         │   └── unspin.cfg.default      # Default config
         └── sbin/
