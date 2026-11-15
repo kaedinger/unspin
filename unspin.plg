@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- feat: beta channel, switch between stable and beta at the bottom right of the settings page, with an Update button for newer versions
+
 ### 2026.11.15.65769
 - docs: clearer wording in changelog, README and help texts
 - feat: promotions don't push other data out of RAM
@@ -260,6 +263,9 @@ echo "Unspin plugin installed successfully."
 
 # Remove package
 removepkg &name;
+
+# Release channel cache and notes
+rm -rf /tmp/unspin-channel /tmp/plugins/unspin-stable.txt /tmp/plugins/unspin-beta.txt
 
 echo "Unspin plugin removed. Config preserved at /boot/config/plugins/unspin/"
 </INLINE>

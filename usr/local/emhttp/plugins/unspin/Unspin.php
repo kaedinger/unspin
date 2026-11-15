@@ -45,6 +45,8 @@ if (file_exists($plg_file)) {
     if (preg_match('/<!ENTITY\s+version\s+"([^"]+)"/', $plg, $m))
         $version = $m[1];
 }
+// CI points the pluginURL of beta builds at the beta channel
+$channel = (isset($plg) && strpos($plg, '/releases/download/beta-channel/unspin.plg') !== false) ? 'beta' : 'stable';
 
 $is_running = daemon_running();
 $pause_locks = pause_reasons();
@@ -156,15 +158,25 @@ dt.hf-rule-label {
 .hf-footer {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
   font-size: 0.85em;
   transition: opacity 0.2s;
 }
-.hf-footer-version {
+/* Release channel switch, bottom right */
+#hf-channel {
   margin-left: auto;
-  opacity: 0.5;
+  display: flex;
+  align-items: center;
+  gap: .6em;
+  flex-wrap: wrap;
 }
+#hf-channel .hf-ch-v { opacity: .6; }
+#hf-channel .hf-ch-v.red-text { opacity: 1; }
+#hf-channel .fa-info-circle { cursor: pointer; }
+#hf-channel .switch-button-label { white-space: nowrap; font-size: inherit; }
+#hf-channel #hf-ch-go { margin: 0; padding: 0 1em; height: auto; min-width: 0; line-height: 1.8; font-size: .9em; }
 .hf-footer:hover { opacity: 1; }
 .hf-footer-avatar {
   width: 28px;
@@ -712,8 +724,98 @@ dt.hf-share-name {
   <a href="https://github.com/sponsors/kaedinger" target="_blank" rel="noopener">Sponsor ♥ - THANK YOU</a>
   <span class="hf-footer-sep">·</span>
   <a href="https://www.paypal.com/donate/?hosted_button_id=ASP53VDRXMDYE" target="_blank" rel="noopener">Donate ♥ - THANK YOU</a>
-  <span class="hf-footer-version">Unspin<?= " v{$version}" ?></span>
+  <div id="hf-channel" title="Installed: Unspin v<?= htmlspecialchars($version) ?>">
+    <input type="checkbox" id="hf-ch-switch">
+    <button type="button" id="hf-ch-go" disabled>Switch</button>
+  </div>
 </div>
+
+<link type="text/css" rel="stylesheet" href="<?autov('/webGui/styles/jquery.switchbutton.css')?>">
+<script src="<?autov('/webGui/javascript/jquery.switchbutton.js')?>"></script>
+<script>
+// Release channel switch: STABLE vX (i) [switch] BETA vY (i) [Switch/Update]
+(function () {
+  var CH  = '/plugins/unspin/include/channel.php';
+  var ins = { version: <?= json_encode($version) ?>, channel: <?= json_encode($channel) ?> };
+  var dat = null;
+  var sw  = $('#hf-ch-switch'), go = $('#hf-ch-go');
+
+  function base(v) { return String(v).replace(/-beta$/, ''); }
+
+  // red like on the Plugins page: newer than what is installed (X and X-beta count as equal)
+  function newer(ch) {
+    return !!(dat && dat[ch]) && base(dat[ch].version) > base(ins.version);   // Unraid compares as strings too
+  }
+
+  function label(name, ch) {
+    var v = (dat && dat[ch]) ? dat[ch].version : (ch === ins.channel ? ins.version : 'unknown');
+    var info = (dat && dat[ch])
+      ? " <i class='fa fa-info-circle fa-fw blue-text' title='Release Notes' onclick=\"event.stopPropagation();openChanges('showchanges " + dat[ch].notes + "','Release Notes')\"></i>"
+      : '';
+    return name + " <span class='hf-ch-v" + (newer(ch) ? " red-text" : "") + "'>v" + v + "</span>" + info;
+  }
+
+  function target() { return sw.is(':checked') ? 'beta' : 'stable'; }
+
+  function render() {
+    sw.switchButton('option', 'off_label', label('STABLE', 'stable'));
+    sw.switchButton('option', 'on_label',  label('BETA', 'beta'));
+    var t = target(), own = t === ins.channel, upd = own && newer(t);
+    go.text(upd ? 'Update' : 'Switch').prop('disabled', !dat || !dat[t] || (own && !upd));
+  }
+
+  function load(refresh) {
+    $.get(CH, { action: 'versions', refresh: refresh ? 1 : 0 }, function (d) {
+      dat = d; ins = d.installed;
+      render();
+    }, 'json').fail(function () { dat = null; render(); });
+  }
+
+  function note(t) {
+    var s = dat.stable.version, b = dat.beta.version;
+    if (t === 'beta') {
+      return "This installs <b>v" + b + "</b> now.<br><br>" +
+        "From now on, the Plugins page offers you beta versions as updates. " +
+        "Betas get new features first, but are tested less than stable releases.<br><br>" +
+        "Your settings stay as they are. You can switch back here at any time.";
+    }
+    var down = base(ins.version) > s;
+    return "This installs <b>v" + s + "</b> now.<br><br>" +
+      "From now on, the Plugins page only offers you stable releases as updates.<br><br>" +
+      (down ? "<b>This is a downgrade.</b> Settings that only exist in the beta are dropped " +
+              "the next time you save, and come back with their defaults if you switch to beta again.<br><br>" : "") +
+      "You can switch back here at any time.";
+  }
+
+  go.click(function () {
+    var t = target();
+    if (!dat || !dat[t]) return;
+    if (t === ins.channel) {
+      // plain update within the channel, like the Plugins page (newer version, no force needed)
+      if (newer(t)) openPlugin('plugin install ' + dat[t].url, 'Update Unspin', 'unspin', 'hfChannelDone');
+      return;
+    }
+    swal({ title: 'Switch to the ' + t + ' channel?', text: note(t), html: true, type: 'warning',
+           showCancelButton: true, confirmButtonText: 'Switch', cancelButtonText: 'Cancel' }, function (ok) {
+      if (!ok) return;
+      // a downgrade to stable needs forced; Unraid refuses older versions otherwise
+      setTimeout(function () {
+        openPlugin('plugin install ' + dat[t].url + ' forced', 'Switch Unspin to the ' + t + ' channel', 'unspin', 'hfChannelDone');
+      }, 300);
+    });
+  });
+
+  // called by Unraid once the install has finished and its window is closed
+  window.hfChannelDone = function () {
+    $.post(CH, { action: 'check' }).always(function () { location.reload(); });
+  };
+
+  sw.switchButton({ labels_placement: 'both', checked: ins.channel === 'beta', clear: false,
+                    off_label: label('STABLE', 'stable'), on_label: label('BETA', 'beta') });
+  sw.change(render);
+  load(0);
+})();
+</script>
 
 <script>
 var HF_DEFAULTS = <?= json_encode($defaults) ?>;

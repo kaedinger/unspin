@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+.[0-9]+-beta'
       - '[0-9]+.[0-9]+.[0-9]+.[0-9]+-dev'
 
 env:
@@ -15,31 +16,72 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VER: ${{ github.ref_name }}
+      BETA_URL: https://github.com/kaedinger/unspin/releases/download/beta-channel/unspin.plg
 
     steps:
+      # build what the tag points to (a -beta tag sits on the beta branch);
+      # full history so the stable run can compare with origin/beta
       - uses: actions/checkout@v4
         with:
-          ref: main
+          fetch-depth: 0
 
       - name: Compile unspind
         run: make build-daemon
 
       - name: Build TXZ package
-        run: make package VERSION=${{ github.ref_name }}
+        run: make package VERSION=$VER
 
       - name: Update .plg version
-        run: make update-plg VERSION=${{ github.ref_name }}
+        run: make update-plg VERSION=$VER
+
+      # beta builds look for updates on the beta channel
+      - name: Point the .plg at the beta channel
+        if: ${{ endsWith(github.ref_name, '-beta') }}
+        run: |
+          sed -i "s|<!ENTITY pluginURL .*>|<!ENTITY pluginURL  \"$BETA_URL\">|" unspin.plg
+          grep -E 'ENTITY (version|pluginURL)' unspin.plg
 
       - name: Create GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PRERELEASE=""
-          if [[ "${{ github.ref_name }}" == *-dev ]]; then
-            PRERELEASE="--prerelease"
-          fi
-          gh release create "${{ github.ref_name }}" \
-            $PRERELEASE \
-            --generate-notes \
-            "pkg/unspin-${{ github.ref_name }}-x86_64-1.txz" \
+          set -euo pipefail
+          case "$VER" in
+            *-beta|*-dev) FLAGS="--prerelease --latest=false" ;;
+            *)            FLAGS="--latest" ;;
+          esac
+          gh release create "$VER" $FLAGS --generate-notes \
+            "pkg/unspin-$VER-x86_64-1.txz" \
             "unspin.plg"
+
+      - name: Update the beta channel
+        if: ${{ endsWith(github.ref_name, '-beta') }}
+        run: |
+          set -euo pipefail
+          gh release view beta-channel >/dev/null 2>&1 || gh release create beta-channel --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "Beta channel" --notes "Holds the newest beta unspin.plg. Installed betas check this for updates."
+          gh release upload beta-channel unspin.plg --clobber
+
+      # beta has the same content as this stable release: the beta channel gets it too, same number.
+      # beta has more: leave the beta channel alone, beta users get the fixes with the next beta.
+      - name: Put the stable release on the beta channel
+        if: ${{ !endsWith(github.ref_name, '-beta') && !endsWith(github.ref_name, '-dev') }}
+        run: |
+          set -euo pipefail
+          if ! git rev-parse -q --verify origin/beta >/dev/null; then
+            echo "::notice::no beta branch - beta channel unchanged"
+            exit 0
+          fi
+          if [ "$(git rev-parse HEAD^{tree})" != "$(git rev-parse origin/beta^{tree})" ]; then
+            echo "::notice::beta differs from $VER - beta channel unchanged, merge main into beta and release a new beta"
+            exit 0
+          fi
+          mkdir -p beta
+          sed -e "s|<!ENTITY pluginURL .*>|<!ENTITY pluginURL  \"$BETA_URL\">|" \
+              -e "s|^### $VER$|### $VER\n- Beta channel: identical to stable release $VER|" \
+              unspin.plg > beta/unspin.plg
+          grep -E 'ENTITY (version|pluginURL)|Beta channel:' beta/unspin.plg
+          gh release view beta-channel >/dev/null 2>&1 || gh release create beta-channel --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "Beta channel" --notes "Holds the newest beta unspin.plg. Installed betas check this for updates."
+          gh release upload beta-channel beta/unspin.plg --clobber
