@@ -21,6 +21,7 @@
 <CHANGES>
 ### next
 - fix: promotions also keep the original file out of RAM
+- docs: beta channel update
 
 ### 2026.11.15.86229
 - feat: beta channel, switch between stable and beta at the bottom right of the settings page, with an Update button for newer versions

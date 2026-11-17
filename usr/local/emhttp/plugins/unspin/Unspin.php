@@ -777,6 +777,8 @@ dt.hf-share-name {
       return "This installs <b>v" + b + "</b> now.<br><br>" +
         "From now on, the Plugins page offers you beta versions as updates. " +
         "Betas get new features first, but are tested less than stable releases.<br><br>" +
+        "Community Applications won't list Unspin under Installed Apps while you're on the beta. " +
+        "It keeps working and updating as usual; manage it on the Plugins page.<br><br>" +
         "Your settings stay as they are. You can switch back here at any time.";
     }
     var down = base(ins.version) > s;

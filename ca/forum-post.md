@@ -60,6 +60,8 @@ Unspin promotes files because they're *read*, so the natural way to demote them 
 plugin install https://github.com/kaedinger/unspin/releases/latest/download/unspin.plg
 ```
 
+**Beta channel:** new features come out as betas first. At the bottom right of the settings page you can switch between stable and beta, see the newest version on each channel, and update. Every stable release reaches the beta channel too. On the beta channel, Community Applications doesn't list Unspin under *Installed Apps*; it keeps working and updating as usual, manage it on the Plugins page.
+
 ## Pause for Backups
 
 Wrap your backup jobs with pause/unpause over SSH so Unspin doesn't count (or promote) files while your backup tool reads them:
