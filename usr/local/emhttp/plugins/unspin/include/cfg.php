@@ -110,7 +110,24 @@ function spin_mark($spinning) {
 // per-pool table (HTML) with an "All pools" sum row when there's more than one
 // pool. Averages count every day since the first promotion on any pool, days
 // without promotions included, so the per-pool averages add up to the sum.
+// Files marked for promotion while their disk slept (daemon's spinup file,
+// "epoch\trule\tpath" lines), as one line counting them per disk; '' if none.
+function spinup_waiting() {
+    $disks = [];
+    foreach (stats_lines('spinup') as $line) {
+        $f = explode("\t", $line, 3);
+        if (count($f) !== 3 || !preg_match('#^/mnt/([^/]+)/#', $f[2], $m)) continue;
+        $disks[$m[1]] = ($disks[$m[1]] ?? 0) + 1;
+    }
+    if (!$disks) return '';
+    uksort($disks, 'strnatcmp');
+    $parts = [];
+    foreach ($disks as $d => $n) $parts[] = htmlspecialchars($d) . ": $n " . ($n === 1 ? 'file' : 'files');
+    return '<div class="hf-spinup-wait">Waiting for their disk to spin up: ' . implode(', ', $parts) . '</div>';
+}
+
 function promotion_stats() {
+    $wait  = spinup_waiting();
     $today = date('Y-m-d');
     $since = null;
     $pools = [];   // pool => [today files, today bytes, total files, total bytes]
@@ -125,7 +142,7 @@ function promotion_stats() {
         $p[3] += (float)$bytes;
         $pools[$pool] = $p;
     }
-    if (!$pools) return ['summary' => 'No promotions yet', 'open' => 'No promotions yet', 'detail' => ''];
+    if (!$pools) return ['summary' => 'No promotions yet', 'open' => 'No promotions yet', 'detail' => $wait];
     ksort($pools);
 
     $sum = [0, 0, 0, 0];
@@ -147,7 +164,7 @@ function promotion_stats() {
     $detail = '<div class="hf-stats-grid"><span></span><span>Today</span><span>Avg/day</span><span>Total</span>';
     foreach ($pools as $name => $p) $detail .= $row($name, $p);
     if (count($pools) > 1) $detail .= $row('All pools', $sum, 'hf-stats-sum');
-    $detail .= '</div>';
+    $detail .= '</div>' . $wait;
     return ['summary' => "Today $t · Avg $a · Total $s",
             'open'    => averaged_over('pool', $days),
             'detail'  => $detail];
@@ -205,7 +222,7 @@ function disk_wakeups() {
                      '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
                      '<td class="hf-time">' . $e(fmt_when($w['at'])) . '</td></tr>';
         }
-        if ($rows === '') $rows = '<tr><td class="hf-muted">No wake-ups recorded yet.</td></tr>';
+        if ($rows === '') $rows = '<tr><td class="hf-muted">No spin-ups recorded yet.</td></tr>';
         $more = count($list) - WAKE_SHOWN;
         $foot = $more <= 0 ? '' : '<div class="hf-wake-toggle" onclick="hfWakeAll()">' .
                                   '<span class="hf-more-show">' . $more . ' more</span><span class="hf-more-hide">Show fewer</span></div>';
@@ -214,7 +231,7 @@ function disk_wakeups() {
                             isset($spin[$disk]) ? spin_mark($spin[$disk]) : '', $foot);
     }
 
-    if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',
+    if (!$counts) return ['summary' => 'No spin-ups recorded yet', 'open' => 'No spin-ups recorded yet',
                           'detail' => '', 'panel' => $panel];
 
     $days = days_since($since);

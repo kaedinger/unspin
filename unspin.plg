@@ -22,6 +22,11 @@
 ### next
 - fix: promotions also keep the original file out of RAM
 - docs: beta channel update
+- feat: Promotion and Spin-ups, a file whose disk was spun down when its rule fired is promoted once the disk spins up for another reason, optionally waiting for parity too
+- fix: a promotion held back by the Mover or rsync runs once it's done
+- docs: a promotion can spin up a sleeping parity disk
+- fix: long help texts on the settings page are shown in full
+- ui: "Disk Wake-ups" is now consistently called "Disk Spin-ups"
 
 ### 2026.11.15.86229
 - feat: beta channel, switch between stable and beta at the bottom right of the settings page, with an Update button for newer versions

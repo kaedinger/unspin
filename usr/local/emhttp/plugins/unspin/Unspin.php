@@ -273,6 +273,7 @@ dt.hf-share-name {
 .hf-stats-grid > span { white-space: nowrap; }
 .hf-stats-grid > span:nth-child(-n+4) { opacity: 0.7; }
 .hf-stats-sum { font-weight: bold; }
+.hf-spinup-wait { margin-top: 0.4em; opacity: 0.8; }
 
 /* Disk wake-ups: a long cause (an SMB user@client) is cut, not widening the grid */
 .hf-wake-grid { grid-template-columns: auto auto auto auto minmax(0, 1fr); }
@@ -332,21 +333,21 @@ dt.hf-share-name {
   </dd>
 
 <?php $wakeups = disk_wakeups(); ?>
-  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Disk Wake-ups</dt>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Disk Spin-ups</dt>
   <dd>
     <div class="hf-fold-line" onclick="hfFold('wakeups')" title="Click for the numbers per disk">
       <span id="hf-fold-caret-wakeups">&#9656;</span> <span id="hf-wakeups-line"><?= htmlspecialchars($wakeups['summary']) ?></span>
     </div>
     <div class="hf-fold-wakeups" style="display:none;">
       <div id="hf-wakeups-table"><?= $wakeups['detail'] ?></div>
-      <input type="button" value="Reset Wake-ups" onclick="hfResetWakeups()">
+      <input type="button" value="Reset Spin-ups" onclick="hfResetWakeups()">
     </div>
-    <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups, or up to 20 with <em>more</em> under a card; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't wake a disk and isn't counted.
-      <br><em>Listing a directory</em>, <em>looking up a name</em>, <em>reading attributes</em>: the disk woke for something that opens no file; the program shown was found waiting for the disk. <em>User share (requester not found)</em>: only the user share file system was found waiting, not the program that asked it.
-      <br><em>Metadata change</em>: nobody waited, but XFS wrote to the disk or parity woke too, so a change kept in RAM was written out later: file times, attributes, or a new, renamed or deleted file or folder. Backup and sync programs cause these even when no file content changed.
+    <div class="hf-help">How often spun-down array disks were spun up: today, average per day and in total, and the cause of the last spin-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client spun up each disk is shown in <em>Latest Disk Spin-ups</em> further down: the causes with their counts, and the last five spin-ups, or up to 20 with <em>more</em> under a card; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't spin up a disk and isn't counted.
+      <br><em>Listing a directory</em>, <em>looking up a name</em>, <em>reading attributes</em>: the disk spun up for something that opens no file; the program shown was found waiting for the disk. <em>User share (requester not found)</em>: only the user share file system was found waiting, not the program that asked it.
+      <br><em>Metadata change</em>: nobody waited, but XFS wrote to the disk or parity spun up too, so a change kept in RAM was written out later: file times, attributes, or a new, renamed or deleted file or folder. Backup and sync programs cause these even when no file content changed.
       <br><em>No file opened</em>: the same as the first, but no waiting program was found. The <em>Dynamix Cache Directories</em> plugin prevents many directory listings, but not every name lookup.
       <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.
-      <br>Parity is not listed: it wakes when a data disk is written, and that write is listed under the data disk. Pools are not watched.</div>
+      <br>Parity is not listed: it spins up when a data disk is written, and that write is listed under the data disk. Pools are not watched.</div>
   </dd>
 </dl>
 
@@ -420,13 +421,29 @@ dt.hf-share-name {
     <div class="hf-help">Pause monitoring while any <code>rsync</code> process is running on the system. Unraid's Mover always pauses Unspin regardless of this setting. Tools like <em>Unbalanced</em> and <em>Mover Tuning</em> use rsync to move files between array disks - leaving this enabled prevents their activity from inflating access counters and triggering false promotions. <strong>Default: Yes.</strong></div>
   </dd>
 
-  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Track Disk Wake-ups</dt>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Track Disk Spin-ups</dt>
   <dd>
     <select name="TRACK_WAKEUPS" id="hf_TRACK_WAKEUPS">
       <?= opt('yes', $c['TRACK_WAKEUPS'] ?? 'yes', 'Yes') ?>
       <?= opt('no',  $c['TRACK_WAKEUPS'] ?? 'yes', 'No') ?>
     </select>
-    <div class="hf-help">Log and count which program, container, VM or SMB client wakes a sleeping array disk, shown under <strong>Disk Wake-ups</strong> above. Works on every array disk Unspin watches, excluded shares included, and keeps running while Unspin is paused. <strong>Default: Yes.</strong></div>
+    <div class="hf-help">Log and count which program, container, VM or SMB client spins up a spun-down array disk, shown under <strong>Disk Spin-ups</strong> above. Works on every array disk Unspin watches, excluded shares included, and keeps running while Unspin is paused. <strong>Default: Yes.</strong></div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Promotion and Spin-ups</dt>
+  <dd>
+    <select name="PROMOTE_ON_SPINUP" id="hf_PROMOTE_ON_SPINUP">
+      <?= opt('yes',    $c['PROMOTE_ON_SPINUP'] ?? 'yes', 'Promote when the disk spins up') ?>
+      <?= opt('parity', $c['PROMOTE_ON_SPINUP'] ?? 'yes', 'Promote when the disk and parity spin up') ?>
+      <?= opt('no',     $c['PROMOTE_ON_SPINUP'] ?? 'yes', "Don't promote (skip)") ?>
+    </select>
+    <div class="hf-help">What happens when a rule fires for a file whose array disk is spun down. That happens when the file was read from RAM, or when the disk spun down while the promotion was waiting: for the file to be closed, for the Mover, or for a pause. Promoting right away would spin the disk up, because the original is removed from the array. Unspin never does that; instead:
+      <ul>
+        <li><strong>Promote when the disk spins up:</strong> the file is marked and promoted as soon as its disk spins up for another reason. Removing the original is a write to the array, so a spun-down parity disk spins up for it.</li>
+        <li><strong>Promote when the disk and parity spin up:</strong> the file waits until both are spinning, so the promotion spins up nothing at all. On a server that mostly reads, parity may only spin up for the next Mover run, so files can wait a long time.</li>
+        <li><strong>Don't promote (skip):</strong> the file stays on the array for now, until a promotion rule fires again.</li>
+      </ul>
+      Marked files are listed under <strong>Promoted to Cache</strong> and survive a reboot. Every decision is logged: when a file is marked or skipped, and when a disk spins up and its marked files are promoted. <strong>Default: Promote when the disk spins up.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Access Times</dt>
@@ -691,7 +708,7 @@ dt.hf-share-name {
 <br>
 
 <div id="hf-wake-panel" style="margin-bottom:24px;<?= ($c['TRACK_WAKEUPS'] ?? 'yes') === 'no' ? 'display:none;' : '' ?>">
-  <strong class="hf-fold-line" style="display:block;margin-bottom:10px;" onclick="hfFold('wakepanel')"><span id="hf-fold-caret-wakepanel">&#9662;</span> Latest Disk Wake-ups</strong>
+  <strong class="hf-fold-line" style="display:block;margin-bottom:10px;" onclick="hfFold('wakepanel')"><span id="hf-fold-caret-wakepanel">&#9662;</span> Latest Disk Spin-ups</strong>
   <div id="hf-wake-cards" class="hf-fold-wakepanel recent-disks-grid"><?= $wakeups['panel'] ?></div>
 </div>
 
@@ -1098,7 +1115,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     hfResetFold('stats', 'Reset Statistics', 'Reset the promotion statistics for all pools? This cannot be undone.');
   };
   window.hfResetWakeups = function () {
-    hfResetFold('wakeups', 'Reset Wake-ups', 'Reset the disk wake-up statistics for all disks? This cannot be undone.');
+    hfResetFold('wakeups', 'Reset Spin-ups', 'Reset the disk spin-up statistics for all disks? This cannot be undone.');
   };
 
   var fields = ['SERVICE','SCAN_PATHS',
@@ -1106,7 +1123,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
                 'LARGE_SHORT_MIN_ACCESSES','LARGE_SHORT_WINDOW_MINS',
                 'LARGE_LONG_MIN_ACCESSES','LARGE_LONG_WINDOW_HOURS',
                 'EXCLUDE_PATTERNS','DRY_RUN','LOG_LEVEL','LOG_EXCLUDED_SHARES',
-                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC','TRACK_WAKEUPS','ENABLE_POOL_ATIME',
+                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC','TRACK_WAKEUPS','PROMOTE_ON_SPINUP','ENABLE_POOL_ATIME',
                 'MOUNT_WAIT_TIMEOUT_MINS','MOUNT_RETRY_INTERVAL_SECS',
                 'RULE1_ENABLED','RULE1_FALLTHROUGH','RULE2_ENABLED','RULE3_ENABLED',
                 'RULE3_MIN_READS'];
@@ -1209,7 +1226,20 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
       if (dd) help = dd.querySelector('.hf-help');
     }
     if (!help) return;
-    help.classList.toggle('open');
+    // Animated to the content's real height (plus padding and border), then
+    // left unlimited, so no help text is ever cut off, at any window width.
+    if (help.classList.contains('open')) {
+      help.style.maxHeight = help.scrollHeight + 'px';   // from 'none' to a number, so it can animate
+      help.offsetHeight;                                  // apply that before closing
+      help.style.maxHeight = '';
+      help.classList.remove('open');
+    } else {
+      help.style.maxHeight = (help.scrollHeight + 16) + 'px';
+      help.classList.add('open');
+      setTimeout(function () {
+        if (help.classList.contains('open')) help.style.maxHeight = 'none';
+      }, 260);
+    }
     // Help text rendered far from its click target (e.g. Detected Shares help
     // sits below the share table) — scroll it into view after expansion.
     if (detached && help.classList.contains('open')) {

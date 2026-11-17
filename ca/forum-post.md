@@ -2,7 +2,7 @@
 
 Unspin automatically promotes your most-accessed files to faster storage (cache/NVMe) using a lightweight C++ daemon that watches file access in real time. The main goal is to have fewer disk spin-ups (hence the name), but we'll take the faster access, too ;-)
 
-It also tells you **which program, container, VM or SMB client woke each of your sleeping disks**, so the eternal "what spun up my disk?" question finally gets an answer.
+It also tells you **which program, container, VM or SMB client spun up each of your disks**, so the eternal "what spun up my disk?" question finally gets an answer.
 
 There's no explicit cold demotion - Unraid's mover (or Mover Tuning, see below) takes care of that.
 
@@ -22,7 +22,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 
 - **Promotion waits until the file is closed everywhere.** A movie you're watching keeps playing from the array and is promoted after you stop; the next open picks up the cache copy. (No live switching during playback.)
 - **A file is never lost, doubled, left half-copied or missing from the share.** The copy stays invisible until it's complete and is only swapped in if nobody moved, changed, deleted or opened the file in the meantime. Whatever you do with the file during a promotion wins, and Unspin simply tries again later. Even a crash mid-promotion is cleaned up on the next start.
-- **Unspin never wakes a sleeping disk.** A file can be read from RAM while its disk sleeps; it isn't promoted then (removing the array copy would wake the disk and parity), but on a later access with the disk awake.
+- **Unspin never spins up a data disk.** A file read from RAM while its disk is spun down is marked and promoted once the disk spins up for another reason. Removing the original from the array is a write, so a spun-down parity disk spins up for it, unless you let Unspin wait for parity too or skip such promotions. Every decision is logged.
 
 ## Features
 
@@ -31,7 +31,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 - **Per-share cache pool routing** - destinations follow each share's own cache pool setting in Unraid, so different shares can promote to different pools. Shares with "Use Cache: No" or "Only" are skipped automatically
 - **Detected Shares** - the settings page lists every share with its routing and a Watch toggle to opt individual shares out
 - **Per-pool fill guard** - each pool gets its own fill % limit; promotion to that pool stops once it's exceeded (ZFS pools with child datasets included)
-- **Disk Wake-ups** - which program, container, VM or SMB client (user and IP) woke which disk, with counts per day and the latest wake-ups. Access through user shares is traced back to the program that asked for the file. Directory listings, name lookups and metadata writes are named as such
+- **Disk Spin-ups** - which program, container, VM or SMB client (user and IP) spun up which disk, with counts per day and the latest spin-ups. Access through user shares is traced back to the program that asked for the file. Directory listings, name lookups and metadata writes are named as such
 - **Promotion statistics** - files and size moved to each pool today, per day on average and in total
 - **Mover / rsync aware** - pauses while Unraid's mover (including Mover Tuning) or, optionally, any rsync runs
 - **Named pause locks for backups** - stackable `rc.unspin pause NAME`, optionally timed (`--ttl 15m`) so a crashed backup job can't leave Unspin paused forever

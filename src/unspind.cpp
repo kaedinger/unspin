@@ -106,6 +106,7 @@ struct Config {
     bool                     pause_on_rsync            = true;  // pause event counting while any rsync process is running
     bool                     enable_pool_atime         = false; // turn access times on for target pools (Mover Tuning ATIME)
     bool                     track_wakeups             = true;  // log and count which process wakes a sleeping disk
+    std::string              promote_on_spinup         = "yes"; // rule fired on a sleeping disk: "yes" promote once it spins up, "parity" once parity is up too, "no" skip
     std::string              log_file                  = "/var/log/unspin.log";
     long                     log_max_size_mb           = 64;    // trim log once it exceeds this size
     long                     log_trim_size_mb          = 5;     // trim log down to this size
@@ -146,6 +147,7 @@ struct AccessRecord {
     time_t             held_at         = 0;     // when that was found
     std::string        held_by;                 // that holder, logged once at INFO
     time_t             asleep_logged   = 0;     // sleep period (spundown_at) of the last "not waking it" INFO line
+    bool               transfer_logged = false; // "active, deferring" logged at INFO for this deferral
 };
 
 struct ShareInfo {
@@ -720,6 +722,7 @@ static void load_config() {
         {"PAUSE_ON_RSYNC",           "yes"},
         {"ENABLE_POOL_ATIME",        "no"},
         {"TRACK_WAKEUPS",            "yes"},
+        {"PROMOTE_ON_SPINUP",        "yes"},
         {"EXCLUDE_PATTERNS",         "/nevercachethis,/orthis"},
         {"LOG_FILE",                 "/var/log/unspin.log"},
         {"LOG_MAX_SIZE_MB",          "64"},
@@ -784,6 +787,8 @@ static void load_config() {
     _cfg.pause_on_rsync           = (get("PAUSE_ON_RSYNC")     != "no");
     _cfg.enable_pool_atime        = (get("ENABLE_POOL_ATIME")  == "yes");
     _cfg.track_wakeups            = (get("TRACK_WAKEUPS")      != "no");
+    _cfg.promote_on_spinup        = get("PROMOTE_ON_SPINUP");
+    if (_cfg.promote_on_spinup != "parity" && _cfg.promote_on_spinup != "no") _cfg.promote_on_spinup = "yes";
     _cfg.log_file                 = get("LOG_FILE");
     _cfg.log_max_size_mb          = num("LOG_MAX_SIZE_MB",  _cfg.log_max_size_mb);
     _cfg.log_trim_size_mb         = num("LOG_TRIM_SIZE_MB", _cfg.log_trim_size_mb);
@@ -854,7 +859,11 @@ static void log_config() {
              (_cfg.rule3_min_reads == 0 ? std::string("off") : std::to_string(_cfg.rule3_min_reads)));
     if (_cfg.dry_run) log_info("DRY RUN mode - no files will be moved");
     log_info(std::string("Pool access times: ") + (_cfg.enable_pool_atime ? "enabled" : "disabled"));
-    log_info(std::string("Disk wake-up tracking: ") + (_cfg.track_wakeups ? "enabled" : "disabled"));
+    log_info(std::string("Disk spin-up tracking: ") + (_cfg.track_wakeups ? "enabled" : "disabled"));
+    log_info(std::string("Promotion and spin-ups: ") +
+             (_cfg.promote_on_spinup == "no"     ? "don't promote from a spun-down disk (skip)" :
+              _cfg.promote_on_spinup == "parity" ? "promote when the disk and parity spin up" :
+                                                   "promote when the disk spins up"));
     log_info(_cfg.mount_wait_timeout_mins > 0
              ? "Mount wait: up to " + std::to_string(_cfg.mount_wait_timeout_mins) +
                " min, retry every " + std::to_string(_cfg.mount_retry_interval_secs) + " s"
@@ -2252,7 +2261,7 @@ static void check_wakeups_reset() {
     _wake_flash_dirty = false;
     unlink(WAKE_LIVE.c_str());
     unlink(WAKE_FILE.c_str());
-    log_info("Disk wake-up statistics reset");
+    log_info("Disk spin-up statistics reset");
 }
 
 static void load_wakeups() {
@@ -2321,7 +2330,7 @@ static void record_wakeup(DiskState& d) {
     WakeEntry w;
     w.at   = time(nullptr);
     w.disk = d.name;
-    std::string msg = "Wake-up: " + d.name;
+    std::string msg = "Spin-up: " + d.name;
     if (pick) {
         if (pick->smb) resolve_smb(*pick);
         w.label  = pick->label;
@@ -2337,7 +2346,7 @@ static void record_wakeup(DiskState& d) {
         w.label = "metadata change";
         w.name  = "metadata";
         msg += std::string(" - metadata change written later (times, attributes, create, rename or delete; ") +
-               (metadata_write ? "XFS wrote it" : "parity woke too") + ")";
+               (metadata_write ? "XFS wrote it" : "parity spun up too") + ")";
     } else if (d.io_seen) {
         w.label = "no file opened";
         w.name  = "dir listing";
@@ -2356,7 +2365,7 @@ static void record_wakeup(DiskState& d) {
     for (const auto& o : others) w.also += (w.also.empty() ? "" : ", ") + o;
     if (!w.also.empty()) msg += " (also active: " + w.also + ")";
 
-    if (pick && pick->pid == getpid()) log_warn(msg + " - Unspin should never wake a disk, please report this");
+    if (pick && pick->pid == getpid()) log_warn(msg + " - Unspin should never spin up a data disk, please report this");
     else                               log_info(msg);
 
     for (auto* f : {&w.label, &w.name, &w.access, &w.path, &w.also}) *f = wake_field(*f);
@@ -2450,6 +2459,75 @@ static void flush_stats(bool force = false) {
         _stats_flash_last = now;
         if (write_stats(STATS_FILE)) _stats_flash_dirty = false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Promotions waiting for a disk to spin up (PROMOTE_ON_SPINUP)
+// ---------------------------------------------------------------------------
+
+// A rule fired, but the file's disk was asleep: promoting would wake it (the
+// original's removal is a write). The file is marked instead and promoted once
+// the disk spins up for some other reason. One line per file,
+// "epoch\trule\tpath", path last (it may hold tabs). Kept like the statistics:
+// SPINUP_LIVE in RAM for the settings page, SPINUP_FILE on the flash hourly and
+// on exit, so marks survive a reboot.
+static const std::string SPINUP_LIVE = "/var/run/unspind.spinup";
+static const std::string SPINUP_FILE = "/boot/config/plugins/unspin/spinup";
+
+struct SpinupMark { std::string rule; time_t at = 0; };
+static std::map<std::string, SpinupMark> _spinup;     // array path -> mark
+static bool   _spinup_live_dirty  = false;
+static bool   _spinup_flash_dirty = false;
+static time_t _spinup_flash_last  = 0;
+static std::unordered_map<std::string, time_t> _spinup_announced;   // disk -> sleep period already announced
+
+static void spinup_changed() { _spinup_live_dirty = _spinup_flash_dirty = true; }
+
+static void load_spinup() {
+    _spinup_flash_last = time(nullptr);
+    auto live = access(SPINUP_LIVE.c_str(), F_OK) == 0;   // newer than the flash copy, see load_stats()
+    _spinup_flash_dirty = live;
+    std::ifstream f(live ? SPINUP_LIVE : SPINUP_FILE);
+    std::string line;
+    while (std::getline(f, line)) {
+        auto t1 = line.find('\t');
+        auto t2 = t1 == std::string::npos ? t1 : line.find('\t', t1 + 1);
+        if (t2 == std::string::npos) continue;
+        SpinupMark m;
+        try { m.at = std::stol(line.substr(0, t1)); } catch (...) { continue; }
+        m.rule = line.substr(t1 + 1, t2 - t1 - 1);
+        _spinup[line.substr(t2 + 1)] = m;
+    }
+    if (!_spinup.empty())
+        log_info(std::to_string(_spinup.size()) + " file(s) waiting for their disk to spin up");
+}
+
+static bool write_spinup(const std::string& path) {
+    std::string out;
+    for (const auto& [p, m] : _spinup)
+        out += std::to_string(m.at) + '\t' + m.rule + '\t' + p + '\n';
+    return write_file_atomic(path, out);
+}
+
+static void flush_spinup(bool force = false) {
+    if (_spinup_live_dirty && write_spinup(SPINUP_LIVE)) _spinup_live_dirty = false;
+    auto now = time(nullptr);
+    if (_spinup_flash_dirty && (force || now - _spinup_flash_last >= STATS_FLASH_INTERVAL_SEC)) {
+        _spinup_flash_last = now;
+        if (write_spinup(SPINUP_FILE)) _spinup_flash_dirty = false;
+    }
+}
+
+// Marks path for promotion once its disk spins up. False when PROMOTE_ON_SPINUP
+// is off: the caller drops the promotion as before.
+static bool mark_for_spinup(const std::string& path, const PromoteDecision& dec, const DiskState& disk) {
+    if (_cfg.promote_on_spinup == "no") return false;
+    if (_spinup.count(path)) return true;
+    _spinup[path] = {dec.rule, time(nullptr)};
+    spinup_changed();
+    log_info("[" + dec.rule + "] " + disk.name + " is spun down, not spinning it up - promoting when it spins up: " +
+             qpath(path));
+    return true;
 }
 
 // holder gets "comm(pid)" for in_use, which the caller logs.
@@ -2587,14 +2665,22 @@ static void try_promote(const std::string& path, int64_t size, const std::string
     if (rec.promoted) return;
     rec.pending_promote = false;  // this attempt is the deferred one, too
     if (auto running = transfers_running(); !running.empty()) {
-        log_info("[" + dec.rule + "] " + running + " active, deferring: " + path);
+        // Stays pending: promote_stale_pending() tries again once it's done.
+        auto msg = "[" + dec.rule + "] " + running + " active, deferring: " + path;
+        if (!rec.transfer_logged) { log_info(msg); rec.transfer_logged = true; }
+        else                      { log_debug(msg); }
+        rec.pending_promote = true;
+        rec.pending_dec     = dec;
         return;
     }
+    rec.transfer_logged = false;
     // The access came from RAM while the disk sleeps. Removing the array copy
-    // would wake it (and parity); the rule fires again on a later access.
+    // would wake it (and parity): marked for the disk's next spin-up, or (with
+    // PROMOTE_ON_SPINUP off) the rule fires again on a later access.
     if (auto disk = sleeping_disk(path)) {
+        if (mark_for_spinup(path, dec, *disk)) return;
         auto msg = "[" + dec.rule + "] " + disk->name +
-                   " is spun down, not waking it - promoting on a later access: " + qpath(path);
+                   " is spun down, not spinning it up - skipping the promotion: " + qpath(path);
         if (rec.asleep_logged != disk->spundown_at) { log_info(msg); rec.asleep_logged = disk->spundown_at; }
         else                                        { log_debug(msg); }
         return;
@@ -2630,6 +2716,7 @@ static void try_promote(const std::string& path, int64_t size, const std::string
     }
     rec.held_by.clear();
     if (result == Handover::done) rec.promoted = true;
+    if (_spinup.erase(path)) spinup_changed();   // promoted, or it can't be (changed, gone, failed)
 }
 
 // ---------------------------------------------------------------------------
@@ -2858,7 +2945,7 @@ static void maybe_cleanup() {
 // push the promotion through anyway instead of waiting forever.
 // Called every PERIODIC_CHECK_INTERVAL_SEC (GH #10).
 static void promote_stale_pending() {
-    if (is_paused()) return;
+    if (is_paused() || transfers_active()) return;
     auto now = time(nullptr);
     for (auto& [path, rec] : _access_map) {
         if (!rec.pending_promote) continue;
@@ -2866,12 +2953,15 @@ static void promote_stale_pending() {
         auto held = rec.held_elsewhere && rec.open_count == 0 && now - rec.held_at >= HELD_RETRY_SEC;
         if (!held && now - rec.last_event < PENDING_PROMOTE_STALE_SEC) continue;
         // Even the lstat() below could wake a sleeping disk once the inode
-        // left the cache. Dropped like a transfer deferral: the next access
-        // with the disk awake re-arms it.
+        // left the cache: marked for the disk's next spin-up, or (with
+        // PROMOTE_ON_SPINUP off) dropped, and the next access with the disk
+        // awake re-arms it.
         if (auto disk = sleeping_disk(path)) {
             rec.pending_promote = false;
-            log_debug("[" + rec.pending_dec.rule + "] Stale pending promotion dropped, " +
-                      disk->name + " is spun down: " + path);
+            rec.held_elsewhere  = false;
+            if (!mark_for_spinup(path, rec.pending_dec, *disk))
+                log_info("[" + rec.pending_dec.rule + "] " + disk->name +
+                         " is spun down, not spinning it up - skipping the waiting promotion: " + qpath(path));
             continue;
         }
         struct stat st;
@@ -2890,6 +2980,54 @@ static void promote_stale_pending() {
         } else {
             rec.pending_promote = false; // gone, no longer a regular file, or no longer promotable
         }
+    }
+}
+
+// Promotes one marked file whose disk is awake again (and parity, with
+// PROMOTE_ON_SPINUP=parity). One per main-loop pass: a copy blocks the loop,
+// so a long list mustn't keep file events waiting until all of it is done.
+// A disk counts as awake once disks.ini says so, not while it's still
+// spinning up: the copy's first read would block the loop for the spin-up.
+static void promote_marked() {
+    if (_spinup.empty() || _cfg.promote_on_spinup == "no") return;
+    if (is_paused() || transfers_active()) return;
+    update_disk_state();
+    if (_cfg.promote_on_spinup == "parity" &&
+        std::any_of(_parity.begin(), _parity.end(), [](const DiskState& p) { return p.spundown; }))
+        return;
+    for (auto it = _spinup.begin(); it != _spinup.end(); ++it) {
+        auto disk = disk_for_path(it->first);
+        if (!disk || disk->spundown) continue;   // asleep, or not mounted (array stopped)
+        auto path = it->first;
+        auto mark = it->second;
+        if (_spinup_announced[disk->name] != disk->spundown_at) {
+            _spinup_announced[disk->name] = disk->spundown_at;
+            auto n = std::count_if(_spinup.begin(), _spinup.end(), [&](const auto& e) {
+                return disk_for_path(e.first) == disk;
+            });
+            log_info(disk->name + " spun up - promoting " + std::to_string(n) +
+                     " file(s) marked while it was spun down");
+        }
+        _spinup.erase(it);
+        spinup_changed();
+
+        struct stat st;
+        auto sname = path_share_name(path);
+        if (lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || sname.empty() || !share_promotable(sname)) {
+            log_debug("[" + mark.rule + "] Marked file gone or no longer promotable: " + path);
+            return;
+        }
+        auto& rec = _access_map[path];
+        if (rec.promoted) return;
+        rec.last_event = time(nullptr);   // keeps the record past the next cleanup
+        PromoteDecision dec{true, mark.rule, "marked while " + disk->name + " was spun down"};
+        if (rec.open_count > 0 || rec.held_elsewhere) {   // promoted once it's closed
+            rec.pending_promote = true;
+            rec.pending_dec     = dec;
+            return;
+        }
+        try_promote(path, (int64_t)st.st_size, sname, rec, dec);
+        return;
     }
 }
 
@@ -3409,6 +3547,7 @@ int main(int argc, char* argv[]) {
     init_nobody();
     load_stats();
     load_wakeups();
+    load_spinup();
 
     int fan_fd = init_fanotify();
     if (fan_fd < 0) {
@@ -3455,6 +3594,12 @@ int main(int argc, char* argv[]) {
             pfd.fd = fan_fd;
             _atime_warned.clear();
             check_pool_atime();
+            if (_cfg.promote_on_spinup == "no" && !_spinup.empty()) {
+                log_info("Promotion and spin-ups set to skip - dropping " +
+                         std::to_string(_spinup.size()) + " marked file(s)");
+                _spinup.clear();
+                spinup_changed();
+            }
         }
 
         auto ret = poll(&pfd, 1, wake_watch_active() ? WAKE_POLL_MS : POLL_TIMEOUT_MS);
@@ -3469,6 +3614,7 @@ int main(int argc, char* argv[]) {
         } else if (pfd.revents & POLLIN) {
             process_events(fan_fd);
         }
+        promote_marked();
 
         // Checked on every pass, not only on poll timeouts: a busy server may
         // never go POLL_TIMEOUT_MS without a file event.
@@ -3485,12 +3631,14 @@ int main(int argc, char* argv[]) {
             check_pool_atime();
             flush_stats();
             flush_wakeups();
+            flush_spinup();
             crash_prepare();   // keeps the crash report's time right across DST changes
         }
     }
 
     flush_stats(true);
     flush_wakeups(true);
+    flush_spinup(true);
     unlink(RUNNING_MARKER.c_str());
     unlink(PAUSE_STATE.c_str());
     close(fan_fd);

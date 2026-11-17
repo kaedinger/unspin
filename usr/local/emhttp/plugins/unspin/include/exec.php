@@ -107,6 +107,7 @@ if ($action === 'save') {
     $k = 'PAUSE_ON_RSYNC';            $cfg[$k] = $yn($k);
     $k = 'ENABLE_POOL_ATIME';         $cfg[$k] = $yn($k);
     $k = 'TRACK_WAKEUPS';             $cfg[$k] = $yn($k);
+    $k = 'PROMOTE_ON_SPINUP';         $cfg[$k] = $enum($k, ['yes','parity','no']);
     $k = 'MOUNT_WAIT_TIMEOUT_MINS';   $cfg[$k] = $pint($k, 0);
     $k = 'MOUNT_RETRY_INTERVAL_SECS'; $cfg[$k] = $pint($k, 1);
     save_cfg(UNSPIN_CFG, $cfg);
@@ -158,7 +159,7 @@ if ($action === 'save') {
 
 } elseif ($action === 'reset_wakeups') {
     reset_stats_file('wakeups');
-    echo json_encode(['ok' => true, 'message' => 'Wake-up statistics reset.',
+    echo json_encode(['ok' => true, 'message' => 'Spin-up statistics reset.',
                       'running' => daemon_running(), 'wakeups' => disk_wakeups()]);
     exit;
 
