@@ -1300,10 +1300,10 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
         return end(Handover::failed, "Cannot create a nameless file in " + tmp_dir +
                                      " for the copy (O_TMPFILE): " + strerror(errno));
 
-    // The copy's pages are written out and dropped from RAM as it goes, so a
-    // promotion doesn't push other cached data out (above all the array disks'
-    // directory blocks, whose loss means a spin-up on the next listing). The
-    // original's pages go with it when it's removed.
+    // The pages of both files are dropped from RAM as the copy goes (the copy's
+    // after they're written out), so a promotion doesn't push other cached data
+    // out (above all the array disks' directory blocks, whose loss means a
+    // spin-up on the next listing). The original is removed afterwards anyway.
     off_t offset = 0, dropped = 0;
     auto remaining = before.st_size;
     while (remaining > 0) {
@@ -1316,6 +1316,7 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
             sync_file_range(tmp_fd, dropped, offset - dropped,
                             SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER);
             posix_fadvise(tmp_fd, dropped, offset - dropped, POSIX_FADV_DONTNEED);
+            posix_fadvise(src_fd, dropped, offset - dropped, POSIX_FADV_DONTNEED);
             dropped = offset;
         }
     }
@@ -1331,6 +1332,7 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
     // On the pool for good before the original goes: else a power cut could lose both.
     if (fsync(tmp_fd) != 0) return end(Handover::failed, "fsync(" + dst + "): " + strerror(errno));
     posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_DONTNEED);
+    posix_fadvise(src_fd, 0, 0, POSIX_FADV_DONTNEED);
 
     struct stat copy, now;
     if (fstat(tmp_fd, &copy) != 0) return end(Handover::failed, "fstat(copy of " + src + "): " + strerror(errno));
