@@ -30,6 +30,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 - **Three-rule promotion** - separate thresholds for small files and large files (streaming burst / periodic access), each rule can be switched on or off
 - **Per-share cache pool routing** - destinations follow each share's own cache pool setting in Unraid, so different shares can promote to different pools. Shares with "Use Cache: No" or "Only" are skipped automatically
 - **Detected Shares** - the settings page lists every share with its routing and a Watch toggle to opt individual shares out
+- **Promote now** - promote a folder (optionally with its subfolders) on request, from the settings page or `rc.unspin promote`: right away, or once its disks spin up anyway
 - **Per-pool fill guard** - each pool gets its own fill % limit; promotion to that pool stops once it's exceeded (ZFS pools with child datasets included)
 - **Disk Spin-ups** - which program, container, VM or SMB client (user and IP) spun up which disk, with counts per day and the latest spin-ups. Access through user shares is traced back to the program that asked for the file. Directory listings, name lookups and metadata writes are named as such
 - **Promotion statistics** - files and size moved to each pool today, per day on average and in total

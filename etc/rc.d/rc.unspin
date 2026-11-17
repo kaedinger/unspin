@@ -4,6 +4,7 @@
 #        /etc/rc.d/rc.unspin pause <name> [--ttl <time>]   # e.g. --ttl 15m
 #        /etc/rc.d/rc.unspin unpause <name>
 #        /etc/rc.d/rc.unspin toggle [name]   # name only needed when this pauses
+#        /etc/rc.d/rc.unspin promote /mnt/user/<share>/<path> [--recursive] [--now] | cancel
 
 DAEMON=/usr/local/sbin/unspind
 PID_FILE=/var/run/unspind.pid
@@ -218,6 +219,54 @@ unspin_toggle() {
     fi
 }
 
+# Promote now: a request file for unspind, which lists the folder on every array
+# disk and marks its files (see the daemon's "Promote now" section). Written under
+# a dot name and renamed, so unspind never reads half a request.
+PROMOTE_DIR=/var/run/unspind.promote.d
+promote_usage() {
+    echo "Usage: $0 promote /mnt/user/<share>/<path> [--recursive] [--now]"
+    echo "       $0 promote cancel   (drops all requested promotions not done yet)"
+    echo "  Without --now, files are promoted once their disk spins up anyway."
+}
+unspin_promote() {
+    local path="$1" recursive=0 mode=spinup
+    shift
+    if [ -z "$path" ]; then promote_usage; return 1; fi
+    if [ "$path" = "cancel" ]; then
+        mode=cancel; path=""
+    else
+        while [ -n "$1" ]; do
+            case "$1" in
+                --recursive) recursive=1 ;;
+                --now)       mode=now ;;
+                *)           promote_usage; return 1 ;;
+            esac
+            shift
+        done
+        case "$path" in
+            /mnt/user/?*) ;;
+            *) echo "Error: give a user share path, e.g. /mnt/user/media/Movies"; return 1 ;;
+        esac
+        case "/$path/" in
+            */../*|*/./*) echo "Error: the path must not contain . or .. parts."; return 1 ;;
+        esac
+    fi
+    if ! is_running; then
+        echo "unspind is not running."
+        return 1
+    fi
+    mkdir -p "$PROMOTE_DIR"
+    local name; name="$(date +%s%N)-$$"
+    printf '%s\n%s\n%s\n' "$mode" "$recursive" "$path" > "$PROMOTE_DIR/.$name"
+    mv "$PROMOTE_DIR/.$name" "$PROMOTE_DIR/$name"
+    kill -s RTMIN+1 "$(cat "$PID_FILE")" 2>/dev/null   # look now, not on the next pass
+    if [ "$mode" = "cancel" ]; then
+        echo "Requested promotions cancelled - see $LOG_FILE."
+    else
+        echo "Requested - unspind marks the files now, see $LOG_FILE."
+    fi
+}
+
 case "$1" in
     start)   unspin_start ;;
     stop)    unspin_stop ;;
@@ -226,8 +275,10 @@ case "$1" in
     pause)   unspin_pause "$2" "$3" "$4" "$5" ;;
     unpause) unspin_unpause "$2" ;;
     toggle)  unspin_toggle "$2" ;;
+    promote) shift; unspin_promote "$@" ;;
     *)       echo "Usage: $0 {start|stop|restart|status|toggle [name]}"
              echo "       $0 pause <name> [--ttl <time>]   (time e.g. 90s, 15m, 2h, 1d)"
              echo "       $0 unpause <name>"
+             echo "       $0 promote /mnt/user/<share>/<path> [--recursive] [--now] | cancel"
              exit 1 ;;
 esac

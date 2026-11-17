@@ -54,6 +54,7 @@ There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mo
 - **ZFS array disk support** - a top-level share on a ZFS-formatted array disk becomes its own dataset mount under the hood; Unspin detects and watches those automatically, both at startup and as new ones appear, so ZFS array disks work the same as XFS/Btrfs
 - **Recently Accessed Files panel** - on debug logging, the settings page shows the last 5 accessed files per disk (read count, promoted state) plus skipped-share hits, scraped from the log itself
 - **Disk spin-ups** - shows which program, container, VM or SMB client spun up a spun-down array disk, with counts per disk and cause and the latest spin-ups. Access through user shares (`shfs`) is traced back to the program that asked for the file. A read served from RAM doesn't spin up a disk and isn't counted; for a directory listing or a name lookup, the program waiting for the disk is shown with what it was doing, or "no file opened" if none was found; a change written out later without a file write (times, attributes, rename, delete) as "metadata change", told apart because XFS writes to the disk or parity spins up too; a command sent to the disk (spin-up, SMART) as "no I/O seen"
+- **Promote now** - promote a folder of a user share (optionally with its subfolders) on request, from the settings page or `rc.unspin promote`: right away, or once its disks spin up anyway
 - **Per-pool fill guard** - each pool gets its own fill % threshold; promotion to that pool stops once it's exceeded
 - **Dry-run mode** - logs every decision without moving anything
 - **Exclude patterns** - skip any path substring
@@ -171,6 +172,8 @@ Unspin promotes files because they are read, so the natural way to demote them i
 /etc/rc.d/rc.unspin pause <name> --ttl 15m   # pause lock that expires unless refreshed
 /etc/rc.d/rc.unspin unpause <name>  # release a pause lock
 /etc/rc.d/rc.unspin toggle [name]   # if paused: clear all locks; if running: pause with <name>
+/etc/rc.d/rc.unspin promote /mnt/user/<share>/<path> [--recursive] [--now]   # promote a folder
+/etc/rc.d/rc.unspin promote cancel  # drop requested promotions not done yet
 ```
 
 Pause locks stack - the daemon only resumes when all locks are released.
@@ -212,6 +215,21 @@ ssh root@nas /etc/rc.d/rc.unspin unpause mybackup
 - A lock not refreshed within its time is removed by Unspin and logged as `Pause lock expired - mybackup`.
 - `rc.unspin status` shows how long each of these locks has left.
 
+### Promote a folder on request
+
+Promote the files of a folder without waiting for the rules, e.g. a series you're about to watch:
+
+```bash
+rc.unspin promote "/mnt/user/media/Series/Some Show/Season 2"               # once its disks spin up anyway
+rc.unspin promote "/mnt/user/media/Series/Some Show" --recursive --now      # right away, with subfolders
+rc.unspin promote cancel                                                    # drop what isn't done yet
+```
+
+- The path must be in a user share with a cache pool; the share doesn't have to be watched. Exclude Patterns still apply.
+- The folder is listed on every array disk right away, which can spin up a disk whose folder listing isn't in RAM.
+- Without `--now`, each file waits until its disk spins up for another reason (and parity, if Promotion and Spin-ups waits for parity). With `--now`, spun-down disks and parity spin up.
+- Files are promoted one after another with the usual checks: the pool fill limit (files wait for space), open files, the Mover and pauses. Waiting files survive a reboot and are listed on the settings page under Promoted to Cache.
+
 The daemon also accepts signals directly (no stacking):
 
 ```bash
@@ -220,6 +238,7 @@ kill -TERM   $(cat /var/run/unspind.pid)   # graceful stop
 kill -USR1   $(cat /var/run/unspind.pid)   # pause
 kill -USR2   $(cat /var/run/unspind.pid)   # unpause
 kill -RTMIN  $(cat /var/run/unspind.pid)   # toggle pause
+kill -RTMIN+1 $(cat /var/run/unspind.pid)  # look for promote requests now (rc.unspin promote sends it)
 ```
 
 ---

@@ -163,6 +163,33 @@ if ($action === 'save') {
                       'running' => daemon_running(), 'wakeups' => disk_wakeups()]);
     exit;
 
+} elseif ($action === 'promote' || $action === 'promote_cancel') {
+    // Promote now: handed to rc.unspin, which writes the request for unspind
+    if ($action === 'promote_cancel') {
+        $args = 'cancel';
+    } else {
+        $path = rtrim(trim($_POST['path'] ?? ''), '/');
+        $args = escapeshellarg($path) . (($_POST['recursive'] ?? '') === 'yes' ? ' --recursive' : '') .
+                (($_POST['mode'] ?? '') === 'now' ? ' --now' : '');
+    }
+    $log_size = @filesize(UNSPIN_LOG) ?: 0;
+    exec("$rc_script promote $args 2>&1", $out, $rc);
+    $msg = implode(' ', $out);
+    // unspind handles the request at once (rc.unspin signals it): show its answer from the log
+    for ($i = 0; $rc === 0 && $i < 10; $i++) {
+        usleep(200000);
+        clearstatcache();
+        $new = (string)@file_get_contents(UNSPIN_LOG, false, null, $log_size);
+        if (preg_match_all('/^\S+ \S+ \[(INFO |WARN )\] ((?:\[promote [^\]]+\] \d+ file|Promote now: ).*)$/m', $new, $m)) {
+            $msg = end($m[2]);
+            if (end($m[1]) === 'WARN ') $rc = 1;
+            break;
+        }
+    }
+    echo json_encode(['ok' => $rc === 0, 'message' => $msg,
+                      'running' => daemon_running(), 'stats' => promotion_stats()]);
+    exit;
+
 } elseif ($action === 'detect_disks') {
     $paths = trim(shell_exec(
         "awk '\$2 ~ /^\\/mnt\\/disk[0-9]+\$/ {print \$2}' /proc/mounts 2>/dev/null | sort -V | paste -sd,"

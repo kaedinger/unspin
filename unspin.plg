@@ -21,6 +21,9 @@
 <CHANGES>
 ### next
 - fix: the settings page shows a new version as soon as the Plugins page does
+- feat: Promote Now, promote a folder of a user share on request, right away or once its disks spin up anyway, also via rc.unspin promote
+- feat: marked files wait for pool space instead of being dropped when the pool is full
+- fix: marked files are promoted one after another without pausing, and their count on the settings page keeps up
 
 ### 2026.11.17.40213-beta
 - fix: promotions also keep the original file out of RAM
