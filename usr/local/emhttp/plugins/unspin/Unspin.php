@@ -333,21 +333,21 @@ dt.hf-share-name {
   </dd>
 
 <?php $wakeups = disk_wakeups(); ?>
-  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Disk Wake-ups</dt>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Disk Spin-ups</dt>
   <dd>
     <div class="hf-fold-line" onclick="hfFold('wakeups')" title="Click for the numbers per disk">
       <span id="hf-fold-caret-wakeups">&#9656;</span> <span id="hf-wakeups-line"><?= htmlspecialchars($wakeups['summary']) ?></span>
     </div>
     <div class="hf-fold-wakeups" style="display:none;">
       <div id="hf-wakeups-table"><?= $wakeups['detail'] ?></div>
-      <input type="button" value="Reset Wake-ups" onclick="hfResetWakeups()">
+      <input type="button" value="Reset Spin-ups" onclick="hfResetWakeups()">
     </div>
-    <div class="hf-help">How often sleeping array disks were woken: today, average per day and in total, and the cause of the last wake-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client woke each disk is shown in <em>Latest Disk Wake-ups</em> further down: the causes with their counts, and the last five wake-ups, or up to 20 with <em>more</em> under a card; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't wake a disk and isn't counted.
-      <br><em>Listing a directory</em>, <em>looking up a name</em>, <em>reading attributes</em>: the disk woke for something that opens no file; the program shown was found waiting for the disk. <em>User share (requester not found)</em>: only the user share file system was found waiting, not the program that asked it.
-      <br><em>Metadata change</em>: nobody waited, but XFS wrote to the disk or parity woke too, so a change kept in RAM was written out later: file times, attributes, or a new, renamed or deleted file or folder. Backup and sync programs cause these even when no file content changed.
+    <div class="hf-help">How often spun-down array disks were spun up: today, average per day and in total, and the cause of the last spin-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client spun up each disk is shown in <em>Latest Disk Spin-ups</em> further down: the causes with their counts, and the last five spin-ups, or up to 20 with <em>more</em> under a card; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't spin up a disk and isn't counted.
+      <br><em>Listing a directory</em>, <em>looking up a name</em>, <em>reading attributes</em>: the disk spun up for something that opens no file; the program shown was found waiting for the disk. <em>User share (requester not found)</em>: only the user share file system was found waiting, not the program that asked it.
+      <br><em>Metadata change</em>: nobody waited, but XFS wrote to the disk or parity spun up too, so a change kept in RAM was written out later: file times, attributes, or a new, renamed or deleted file or folder. Backup and sync programs cause these even when no file content changed.
       <br><em>No file opened</em>: the same as the first, but no waiting program was found. The <em>Dynamix Cache Directories</em> plugin prevents many directory listings, but not every name lookup.
       <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.
-      <br>Parity is not listed: it wakes when a data disk is written, and that write is listed under the data disk. Pools are not watched.</div>
+      <br>Parity is not listed: it spins up when a data disk is written, and that write is listed under the data disk. Pools are not watched.</div>
   </dd>
 </dl>
 
@@ -421,13 +421,13 @@ dt.hf-share-name {
     <div class="hf-help">Pause monitoring while any <code>rsync</code> process is running on the system. Unraid's Mover always pauses Unspin regardless of this setting. Tools like <em>Unbalanced</em> and <em>Mover Tuning</em> use rsync to move files between array disks - leaving this enabled prevents their activity from inflating access counters and triggering false promotions. <strong>Default: Yes.</strong></div>
   </dd>
 
-  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Track Disk Wake-ups</dt>
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Track Disk Spin-ups</dt>
   <dd>
     <select name="TRACK_WAKEUPS" id="hf_TRACK_WAKEUPS">
       <?= opt('yes', $c['TRACK_WAKEUPS'] ?? 'yes', 'Yes') ?>
       <?= opt('no',  $c['TRACK_WAKEUPS'] ?? 'yes', 'No') ?>
     </select>
-    <div class="hf-help">Log and count which program, container, VM or SMB client wakes a sleeping array disk, shown under <strong>Disk Wake-ups</strong> above. Works on every array disk Unspin watches, excluded shares included, and keeps running while Unspin is paused. <strong>Default: Yes.</strong></div>
+    <div class="hf-help">Log and count which program, container, VM or SMB client spins up a spun-down array disk, shown under <strong>Disk Spin-ups</strong> above. Works on every array disk Unspin watches, excluded shares included, and keeps running while Unspin is paused. <strong>Default: Yes.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Promotion and Spin-ups</dt>
@@ -708,7 +708,7 @@ dt.hf-share-name {
 <br>
 
 <div id="hf-wake-panel" style="margin-bottom:24px;<?= ($c['TRACK_WAKEUPS'] ?? 'yes') === 'no' ? 'display:none;' : '' ?>">
-  <strong class="hf-fold-line" style="display:block;margin-bottom:10px;" onclick="hfFold('wakepanel')"><span id="hf-fold-caret-wakepanel">&#9662;</span> Latest Disk Wake-ups</strong>
+  <strong class="hf-fold-line" style="display:block;margin-bottom:10px;" onclick="hfFold('wakepanel')"><span id="hf-fold-caret-wakepanel">&#9662;</span> Latest Disk Spin-ups</strong>
   <div id="hf-wake-cards" class="hf-fold-wakepanel recent-disks-grid"><?= $wakeups['panel'] ?></div>
 </div>
 
@@ -1113,7 +1113,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     hfResetFold('stats', 'Reset Statistics', 'Reset the promotion statistics for all pools? This cannot be undone.');
   };
   window.hfResetWakeups = function () {
-    hfResetFold('wakeups', 'Reset Wake-ups', 'Reset the disk wake-up statistics for all disks? This cannot be undone.');
+    hfResetFold('wakeups', 'Reset Spin-ups', 'Reset the disk spin-up statistics for all disks? This cannot be undone.');
   };
 
   var fields = ['SERVICE','SCAN_PATHS',

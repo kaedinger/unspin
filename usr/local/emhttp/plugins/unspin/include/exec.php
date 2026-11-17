@@ -159,7 +159,7 @@ if ($action === 'save') {
 
 } elseif ($action === 'reset_wakeups') {
     reset_stats_file('wakeups');
-    echo json_encode(['ok' => true, 'message' => 'Wake-up statistics reset.',
+    echo json_encode(['ok' => true, 'message' => 'Spin-up statistics reset.',
                       'running' => daemon_running(), 'wakeups' => disk_wakeups()]);
     exit;
 

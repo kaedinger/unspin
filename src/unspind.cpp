@@ -859,7 +859,7 @@ static void log_config() {
              (_cfg.rule3_min_reads == 0 ? std::string("off") : std::to_string(_cfg.rule3_min_reads)));
     if (_cfg.dry_run) log_info("DRY RUN mode - no files will be moved");
     log_info(std::string("Pool access times: ") + (_cfg.enable_pool_atime ? "enabled" : "disabled"));
-    log_info(std::string("Disk wake-up tracking: ") + (_cfg.track_wakeups ? "enabled" : "disabled"));
+    log_info(std::string("Disk spin-up tracking: ") + (_cfg.track_wakeups ? "enabled" : "disabled"));
     log_info(std::string("Promotion and spin-ups: ") +
              (_cfg.promote_on_spinup == "no"     ? "don't promote from a spun-down disk (skip)" :
               _cfg.promote_on_spinup == "parity" ? "promote when the disk and parity spin up" :
@@ -2261,7 +2261,7 @@ static void check_wakeups_reset() {
     _wake_flash_dirty = false;
     unlink(WAKE_LIVE.c_str());
     unlink(WAKE_FILE.c_str());
-    log_info("Disk wake-up statistics reset");
+    log_info("Disk spin-up statistics reset");
 }
 
 static void load_wakeups() {
@@ -2330,7 +2330,7 @@ static void record_wakeup(DiskState& d) {
     WakeEntry w;
     w.at   = time(nullptr);
     w.disk = d.name;
-    std::string msg = "Wake-up: " + d.name;
+    std::string msg = "Spin-up: " + d.name;
     if (pick) {
         if (pick->smb) resolve_smb(*pick);
         w.label  = pick->label;
@@ -2346,7 +2346,7 @@ static void record_wakeup(DiskState& d) {
         w.label = "metadata change";
         w.name  = "metadata";
         msg += std::string(" - metadata change written later (times, attributes, create, rename or delete; ") +
-               (metadata_write ? "XFS wrote it" : "parity woke too") + ")";
+               (metadata_write ? "XFS wrote it" : "parity spun up too") + ")";
     } else if (d.io_seen) {
         w.label = "no file opened";
         w.name  = "dir listing";
@@ -2365,7 +2365,7 @@ static void record_wakeup(DiskState& d) {
     for (const auto& o : others) w.also += (w.also.empty() ? "" : ", ") + o;
     if (!w.also.empty()) msg += " (also active: " + w.also + ")";
 
-    if (pick && pick->pid == getpid()) log_warn(msg + " - Unspin should never wake a disk, please report this");
+    if (pick && pick->pid == getpid()) log_warn(msg + " - Unspin should never spin up a data disk, please report this");
     else                               log_info(msg);
 
     for (auto* f : {&w.label, &w.name, &w.access, &w.path, &w.also}) *f = wake_field(*f);
@@ -2525,7 +2525,7 @@ static bool mark_for_spinup(const std::string& path, const PromoteDecision& dec,
     if (_spinup.count(path)) return true;
     _spinup[path] = {dec.rule, time(nullptr)};
     spinup_changed();
-    log_info("[" + dec.rule + "] " + disk.name + " is spun down, not waking it - promoting when it spins up: " +
+    log_info("[" + dec.rule + "] " + disk.name + " is spun down, not spinning it up - promoting when it spins up: " +
              qpath(path));
     return true;
 }
@@ -2680,7 +2680,7 @@ static void try_promote(const std::string& path, int64_t size, const std::string
     if (auto disk = sleeping_disk(path)) {
         if (mark_for_spinup(path, dec, *disk)) return;
         auto msg = "[" + dec.rule + "] " + disk->name +
-                   " is spun down, not waking it - skipping the promotion: " + qpath(path);
+                   " is spun down, not spinning it up - skipping the promotion: " + qpath(path);
         if (rec.asleep_logged != disk->spundown_at) { log_info(msg); rec.asleep_logged = disk->spundown_at; }
         else                                        { log_debug(msg); }
         return;
@@ -2961,7 +2961,7 @@ static void promote_stale_pending() {
             rec.held_elsewhere  = false;
             if (!mark_for_spinup(path, rec.pending_dec, *disk))
                 log_info("[" + rec.pending_dec.rule + "] " + disk->name +
-                         " is spun down, not waking it - skipping the waiting promotion: " + qpath(path));
+                         " is spun down, not spinning it up - skipping the waiting promotion: " + qpath(path));
             continue;
         }
         struct stat st;

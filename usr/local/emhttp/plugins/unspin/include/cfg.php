@@ -222,7 +222,7 @@ function disk_wakeups() {
                      '<td class="recent-path" data-full="' . $e($what) . '">' . $e($what) . '</td>' .
                      '<td class="hf-time">' . $e(fmt_when($w['at'])) . '</td></tr>';
         }
-        if ($rows === '') $rows = '<tr><td class="hf-muted">No wake-ups recorded yet.</td></tr>';
+        if ($rows === '') $rows = '<tr><td class="hf-muted">No spin-ups recorded yet.</td></tr>';
         $more = count($list) - WAKE_SHOWN;
         $foot = $more <= 0 ? '' : '<div class="hf-wake-toggle" onclick="hfWakeAll()">' .
                                   '<span class="hf-more-show">' . $more . ' more</span><span class="hf-more-hide">Show fewer</span></div>';
@@ -231,7 +231,7 @@ function disk_wakeups() {
                             isset($spin[$disk]) ? spin_mark($spin[$disk]) : '', $foot);
     }
 
-    if (!$counts) return ['summary' => 'No wake-ups recorded yet', 'open' => 'No wake-ups recorded yet',
+    if (!$counts) return ['summary' => 'No spin-ups recorded yet', 'open' => 'No spin-ups recorded yet',
                           'detail' => '', 'panel' => $panel];
 
     $days = days_since($since);
