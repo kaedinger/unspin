@@ -123,7 +123,7 @@ function spinup_waiting() {
     uksort($disks, 'strnatcmp');
     $parts = [];
     foreach ($disks as $d => $n) $parts[] = htmlspecialchars($d) . ": $n " . ($n === 1 ? 'file' : 'files');
-    return '<div class="hf-spinup-wait">Waiting for their disk to spin up: ' . implode(', ', $parts) . '</div>';
+    return '<div class="hf-spinup-wait">Waiting for promotion: ' . implode(', ', $parts) . '</div>';
 }
 
 function promotion_stats() {

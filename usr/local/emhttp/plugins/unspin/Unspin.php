@@ -275,6 +275,18 @@ dt.hf-share-name {
 .hf-stats-sum { font-weight: bold; }
 .hf-spinup-wait { margin-top: 0.4em; opacity: 0.8; }
 
+/* Promote Now: one control per line, within the settings column */
+.hf-promote { width: var(--hf-col); max-width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.hf-promote > select { width: 100%; margin: 0; }
+.hf-pick { position: relative; display: flex; align-items: center; gap: 4px; }
+.hf-pick-prefix { opacity: 0.7; white-space: nowrap; }
+.hf-pick input[type=text] { flex: 1; min-width: 0; margin: 0; }
+/* Unraid's folder picker, opened below the path line instead of where the plugin puts it */
+.hf-pick .fileTree { left: 0 !important; top: 100% !important; width: 100%; box-sizing: border-box; }
+.hf-promote-sub { white-space: nowrap; }
+.hf-promote-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 7px; }
+.hf-promote-btns input { margin: 0; }
+
 /* Disk wake-ups: a long cause (an SMB user@client) is cut, not widening the grid */
 .hf-wake-grid { grid-template-columns: auto auto auto auto minmax(0, 1fr); }
 .hf-wake-grid > span:nth-child(5) { opacity: 0.7; }
@@ -330,6 +342,32 @@ dt.hf-share-name {
       <input type="button" value="Reset Statistics" onclick="hfResetStats()">
     </div>
     <div class="hf-help">Files Unspin moved to the cache pools: today, average per day and in total, summed over all pools. Click the line for the numbers per pool. Dry run promotions are not counted. The average counts every day since the first promotion, including days without any. Updated about once a minute.</div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Promote Now</dt>
+  <dd>
+    <div class="hf-promote">
+      <div class="hf-pick">
+        <span class="hf-pick-prefix">/mnt/user/</span>
+        <input type="text" id="hf-promote-path" placeholder="share/folder" autocomplete="off"
+          data-pickroot="/mnt/user/" data-picktop="/mnt/user/" data-pickfilter="HIDE_FILES_FILTER">
+      </div>
+      <label class="hf-promote-sub"><input type="checkbox" id="hf-promote-sub"> Include subfolders</label>
+      <select id="hf-promote-mode">
+        <option value="spinup" selected>When the disks spin up anyway</option>
+        <option value="now">Now (spins up disks if needed)</option>
+      </select>
+      <div class="hf-promote-btns">
+        <input type="button" value="Cancel Requests" onclick="hfPromote(true)">
+        <input type="button" value="Promote" onclick="hfPromote()">
+      </div>
+    </div>
+    <div class="hf-help">Promote the files of a folder in a user share, without waiting for the rules. Pick the folder from the list that opens below the path line, or type it; with <strong>Include subfolders</strong>, everything below it too. Browsing the list and the promotion's own look-up of the folder on every array disk can spin up a disk whose folder listing isn't in RAM.
+      <ul>
+        <li><strong>When the disks spin up anyway:</strong> each file is promoted once its disk spins up for another reason (and parity too, if <strong>Promotion and Spin-ups</strong> waits for parity).</li>
+        <li><strong>Now:</strong> the files are promoted right away, one after another. Spun-down disks and parity spin up for it.</li>
+      </ul>
+      Works for every share with a cache pool, even one Unspin doesn't watch; <strong>Exclude Patterns</strong> still apply. Files already on the pool are left alone. The usual checks stay: the pool fill limit (files wait for space), open files, the Mover and pauses. Waiting files are listed under <strong>Promoted to Cache</strong>, survive a reboot, and are dropped with <strong>Cancel Requests</strong>. Every step is logged. A later Mover run can move the files back to the array, depending on its own settings. Scripts can do the same with <code>/etc/rc.d/rc.unspin promote /mnt/user/share/folder [--recursive] [--now]</code>.</div>
   </dd>
 
 <?php $wakeups = disk_wakeups(); ?>
@@ -749,6 +787,8 @@ dt.hf-share-name {
 
 <link type="text/css" rel="stylesheet" href="<?autov('/webGui/styles/jquery.switchbutton.css')?>">
 <script src="<?autov('/webGui/javascript/jquery.switchbutton.js')?>"></script>
+<link type="text/css" rel="stylesheet" href="<?autov('/webGui/styles/jquery.filetree.css')?>">
+<script src="<?autov('/webGui/javascript/jquery.filetree.js')?>"></script>
 <script>
 // Release channel switch: STABLE vX (i) [switch] BETA vY (i) [Switch/Update]
 (function () {
@@ -1116,6 +1156,59 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
   };
   window.hfResetWakeups = function () {
     hfResetFold('wakeups', 'Reset Spin-ups', 'Reset the disk spin-up statistics for all disks? This cannot be undone.');
+  };
+
+  // Promote now: the path line holds the part after /mnt/user/ (shown in front of it).
+  // A pasted full path is shortened; slashes at either end are dropped.
+  function hfPromoteRel(v) {
+    return v.trim().replace(/^\/?mnt\/user(\/|$)/, '').replace(/^\/+|\/+$/g, '');
+  }
+  (function () {
+    var $in = $('#hf-promote-path');
+    if (!$in.length || !$.fn.fileTreeAttach) return;
+    // Unraid's folder picker (as in Docker templates), folders only. A click on a
+    // folder fills in its path; it opens on a click, and on Tab focus too.
+    $in.fileTreeAttach(null, null, function (folder) { $in.val(hfPromoteRel(folder)); });
+    var byMouse = false;
+    $in.on('mousedown', function () { byMouse = true; })
+       .on('focus', function () {
+         if (!byMouse && !$in.next('.fileTree').is(':visible')) $in.trigger('click');
+         byMouse = false;
+       })
+       .on('keydown', function (e) {
+         if (e.key === 'Escape') $in.next('.fileTree').slideUp('fast');
+         if (e.key === 'Enter') { e.preventDefault(); $in.next('.fileTree').slideUp('fast'); hfPromote(); }
+       })
+       .on('change blur', function () { $in.val(hfPromoteRel($in.val())); });
+  })();
+
+  // The request goes to rc.unspin; the marked files show under Promoted to Cache.
+  window.hfPromote = function (cancel) {
+    var send = function (data) {
+      hfPost(data, function (r) {
+        showMsg(r.message, r.ok);
+        if (r.stats) applyFoldData('stats', r.stats);
+      });
+    };
+    if (cancel) {
+      hfConfirm('Cancel Requests', 'Drop all requested promotions that are not done yet?', 'Drop', 'Keep', function (ok) {
+        if (ok) send({ action: 'promote_cancel' });
+      });
+      return;
+    }
+    var rel = hfPromoteRel(document.getElementById('hf-promote-path').value);
+    if (!rel) {
+      showMsg('Pick or enter a folder of a user share, e.g. media/Movies', false);
+      return;
+    }
+    var path = '/mnt/user/' + rel;
+    var data = { action: 'promote', path: path,
+                 recursive: document.getElementById('hf-promote-sub').checked ? 'yes' : 'no',
+                 mode: document.getElementById('hf-promote-mode').value };
+    if (data.mode !== 'now') { send(data); return; }
+    hfConfirm('Promote Now', 'Promote the files in ' + path + (data.recursive === 'yes' ? ' and its subfolders' : '') +
+              ' right away? Disks they are on spin up if they are spun down, and so does parity.',
+              'Promote', 'Cancel', function (ok) { if (ok) send(data); });
   };
 
   var fields = ['SERVICE','SCAN_PATHS',

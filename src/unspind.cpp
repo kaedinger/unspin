@@ -86,6 +86,7 @@ static std::string _cfg_file = "/boot/config/plugins/unspin/unspin.cfg";
 static volatile sig_atomic_t _quit   = 0;
 static volatile sig_atomic_t _reload = 0;
 static volatile sig_atomic_t _paused = 0;
+static volatile sig_atomic_t _promote_request = 0;
 
 struct Config {
     std::vector<std::string> scan_paths                = {"/mnt/disk1","/mnt/disk2"};
@@ -516,6 +517,7 @@ static void sig_handler(int sig) {
     else if (sig == SIGUSR1)                  _paused = 1;
     else if (sig == SIGUSR2)                  _paused = 0;
     else if (sig == SIGRTMIN)                 _paused = !_paused;
+    else if (sig == SIGRTMIN + 1)             _promote_request = 1;   // rc.unspin promote: look now
 }
 
 // ---------------------------------------------------------------------------
@@ -657,7 +659,7 @@ static void install_crash_handlers() {
     for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGTRAP, SIGSYS, SIGQUIT,
                     SIGALRM, SIGVTALRM, SIGPROF, SIGXCPU, SIGXFSZ, SIGPWR, SIGSTKFLT})
         sigaction(sig, &sa, nullptr);
-    for (int sig = SIGRTMIN + 1; sig <= SIGRTMAX; ++sig)   // SIGRTMIN itself toggles pause
+    for (int sig = SIGRTMIN + 2; sig <= SIGRTMAX; ++sig)   // SIGRTMIN toggles pause, SIGRTMIN+1 = promote request
         sigaction(sig, &sa, nullptr);
 
     if (access(RUNNING_MARKER.c_str(), F_OK) == 0)
@@ -2509,20 +2511,50 @@ static bool write_spinup(const std::string& path) {
     return write_file_atomic(path, out);
 }
 
+// The RAM copy follows changes within SPINUP_LIVE_INTERVAL_SEC (called on every
+// main-loop pass), so the settings page's count keeps up while files are promoted.
+static constexpr int SPINUP_LIVE_INTERVAL_SEC = 5;
 static void flush_spinup(bool force = false) {
-    if (_spinup_live_dirty && write_spinup(SPINUP_LIVE)) _spinup_live_dirty = false;
+    static time_t live_last = 0;
     auto now = time(nullptr);
+    if (_spinup_live_dirty && (force || now - live_last >= SPINUP_LIVE_INTERVAL_SEC)) {
+        live_last = now;
+        if (write_spinup(SPINUP_LIVE)) _spinup_live_dirty = false;
+    }
     if (_spinup_flash_dirty && (force || now - _spinup_flash_last >= STATS_FLASH_INTERVAL_SEC)) {
         _spinup_flash_last = now;
         if (write_spinup(SPINUP_FILE)) _spinup_flash_dirty = false;
     }
 }
 
+// Right away, for a Promote now request: the settings page shows the count on its reply.
+static void write_spinup_live_now() {
+    if (write_spinup(SPINUP_LIVE)) _spinup_live_dirty = false;
+}
+
+// Rules of marks from a Promote now request (settings page or rc.unspin promote):
+// right away, spinning disks up if needed, or once the disks spin up anyway.
+// Both apply whatever PROMOTE_ON_SPINUP says, and to unwatched shares too.
+static const std::string RULE_PROMOTE_NOW    = "promote now";
+static const std::string RULE_PROMOTE_SPINUP = "promote on spin-up";
+static bool manual_rule(const std::string& rule) {
+    return rule == RULE_PROMOTE_NOW || rule == RULE_PROMOTE_SPINUP;
+}
+
+// Rule-based promotions need a watched share with a cache pool; requested
+// ones only the cache pool.
+static bool share_ok_for(const std::string& share, const std::string& rule) {
+    if (!manual_rule(rule)) return share_promotable(share);
+    auto it = _shares.find(share);
+    return it != _shares.end() && !it->second.cache_pool.empty() &&
+           (it->second.use_cache == "yes" || it->second.use_cache == "prefer");
+}
+
 // Marks path for promotion once its disk spins up. False when PROMOTE_ON_SPINUP
 // is off: the caller drops the promotion as before.
 static bool mark_for_spinup(const std::string& path, const PromoteDecision& dec, const DiskState& disk) {
-    if (_cfg.promote_on_spinup == "no") return false;
     if (_spinup.count(path)) return true;
+    if (_cfg.promote_on_spinup == "no" && !manual_rule(dec.rule)) return false;
     _spinup[path] = {dec.rule, time(nullptr)};
     spinup_changed();
     log_info("[" + dec.rule + "] " + disk.name + " is spun down, not spinning it up - promoting when it spins up: " +
@@ -2676,8 +2708,9 @@ static void try_promote(const std::string& path, int64_t size, const std::string
     rec.transfer_logged = false;
     // The access came from RAM while the disk sleeps. Removing the array copy
     // would wake it (and parity): marked for the disk's next spin-up, or (with
-    // PROMOTE_ON_SPINUP off) the rule fires again on a later access.
-    if (auto disk = sleeping_disk(path)) {
+    // PROMOTE_ON_SPINUP off) the rule fires again on a later access. A
+    // "promote now" request spins the disk up on purpose.
+    if (auto disk = dec.rule == RULE_PROMOTE_NOW ? nullptr : sleeping_disk(path)) {
         if (mark_for_spinup(path, dec, *disk)) return;
         auto msg = "[" + dec.rule + "] " + disk->name +
                    " is spun down, not spinning it up - skipping the promotion: " + qpath(path);
@@ -2956,7 +2989,7 @@ static void promote_stale_pending() {
         // left the cache: marked for the disk's next spin-up, or (with
         // PROMOTE_ON_SPINUP off) dropped, and the next access with the disk
         // awake re-arms it.
-        if (auto disk = sleeping_disk(path)) {
+        if (auto disk = rec.pending_dec.rule == RULE_PROMOTE_NOW ? nullptr : sleeping_disk(path)) {
             rec.pending_promote = false;
             rec.held_elsewhere  = false;
             if (!mark_for_spinup(path, rec.pending_dec, *disk))
@@ -2967,7 +3000,7 @@ static void promote_stale_pending() {
         struct stat st;
         auto sname = path_share_name(path);
         if (lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
-            !sname.empty() && share_promotable(sname)) {
+            !sname.empty() && share_ok_for(sname, rec.pending_dec.rule)) {
             PromoteDecision dec = rec.pending_dec;
             rec.pending_promote = false;
             rec.held_elsewhere  = false;
@@ -2984,23 +3017,55 @@ static void promote_stale_pending() {
 }
 
 // Promotes one marked file whose disk is awake again (and parity, with
-// PROMOTE_ON_SPINUP=parity). One per main-loop pass: a copy blocks the loop,
-// so a long list mustn't keep file events waiting until all of it is done.
-// A disk counts as awake once disks.ini says so, not while it's still
-// spinning up: the copy's first read would block the loop for the spin-up.
+// PROMOTE_ON_SPINUP=parity), or that a "promote now" request marked. One per
+// main-loop pass: a copy blocks the loop, so a long list mustn't keep file
+// events waiting until all of it is done. A disk counts as awake once
+// disks.ini says so, not while it's still spinning up: the copy's first read
+// would block the loop for the spin-up. A file whose pool is full keeps its
+// mark and waits for space (the Mover frees it).
+static time_t _marks_wait_until = 0;   // every eligible mark waits for pool space: look again then
+static std::unordered_set<std::string> _pool_full_logged;
+
+static bool _marks_busy = false;   // the last pass handled a marked file: the next one starts right away
+
 static void promote_marked() {
-    if (_spinup.empty() || _cfg.promote_on_spinup == "no") return;
+    _marks_busy = false;
+    if (_spinup.empty()) return;
     if (is_paused() || transfers_active()) return;
+    auto now = time(nullptr);
+    if (now < _marks_wait_until) return;
     update_disk_state();
-    if (_cfg.promote_on_spinup == "parity" &&
-        std::any_of(_parity.begin(), _parity.end(), [](const DiskState& p) { return p.spundown; }))
-        return;
+    auto parity_up = std::none_of(_parity.begin(), _parity.end(), [](const DiskState& p) { return p.spundown; });
+    std::unordered_map<std::string, bool> full;   // pool -> over its fill limit, checked once per pass
+    auto waiting_for_space = false;
     for (auto it = _spinup.begin(); it != _spinup.end(); ++it) {
         auto disk = disk_for_path(it->first);
-        if (!disk || disk->spundown) continue;   // asleep, or not mounted (array stopped)
+        if (!disk) continue;   // not mounted (array stopped)
+        auto force = it->second.rule == RULE_PROMOTE_NOW;
+        if (!force && disk->spundown) continue;
+        if (!force && _cfg.promote_on_spinup == "parity" && !parity_up) continue;
+        if (!force && _cfg.promote_on_spinup == "no" && !manual_rule(it->second.rule)) continue;
+
+        auto sname = path_share_name(it->first);
+        auto sit = _shares.find(sname);
+        if (sit != _shares.end() && !sit->second.cache_pool.empty()) {
+            const auto& pool = sit->second.cache_pool;
+            if (!full.count(pool)) {
+                auto pit = _pools.find(pool);
+                auto limit = pit != _pools.end() ? pit->second.max_fill_percent : _cfg.default_max_fill_percent;
+                auto fill = disk_fill_percent(MNT_PREFIX + pool);
+                full[pool] = fill >= limit;
+                if (!full[pool]) _pool_full_logged.erase(pool);
+                else if (_pool_full_logged.insert(pool).second)
+                    log_info("Pool " + MNT_PREFIX + pool + " " + std::to_string((int)fill) +
+                             "% full - marked files wait for space");
+            }
+            if (full[pool]) { waiting_for_space = true; continue; }
+        }
+
         auto path = it->first;
         auto mark = it->second;
-        if (_spinup_announced[disk->name] != disk->spundown_at) {
+        if (!force && _spinup_announced[disk->name] != disk->spundown_at) {
             _spinup_announced[disk->name] = disk->spundown_at;
             auto n = std::count_if(_spinup.begin(), _spinup.end(), [&](const auto& e) {
                 return disk_for_path(e.first) == disk;
@@ -3009,18 +3074,19 @@ static void promote_marked() {
                      " file(s) marked while it was spun down");
         }
         _spinup.erase(it);
+        _marks_busy = true;
         spinup_changed();
 
         struct stat st;
-        auto sname = path_share_name(path);
-        if (lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || sname.empty() || !share_promotable(sname)) {
+        if (lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || sname.empty() || !share_ok_for(sname, mark.rule)) {
             log_debug("[" + mark.rule + "] Marked file gone or no longer promotable: " + path);
             return;
         }
         auto& rec = _access_map[path];
         if (rec.promoted) return;
-        rec.last_event = time(nullptr);   // keeps the record past the next cleanup
-        PromoteDecision dec{true, mark.rule, "marked while " + disk->name + " was spun down"};
+        rec.last_event = now;   // keeps the record past the next cleanup
+        PromoteDecision dec{true, mark.rule, manual_rule(mark.rule) ? std::string("requested")
+                                             : "marked while " + disk->name + " was spun down"};
         if (rec.open_count > 0 || rec.held_elsewhere) {   // promoted once it's closed
             rec.pending_promote = true;
             rec.pending_dec     = dec;
@@ -3029,6 +3095,123 @@ static void promote_marked() {
         try_promote(path, (int64_t)st.st_size, sname, rec, dec);
         return;
     }
+    // Nothing promoted this pass. If pool space held marks back, the fill
+    // check (a `zfs get` on ZFS pools) needn't run on every pass.
+    if (waiting_for_space) _marks_wait_until = now + PERIODIC_CHECK_INTERVAL_SEC;
+}
+
+// ---------------------------------------------------------------------------
+// Promote now: requests from the settings page or `rc.unspin promote`
+// ---------------------------------------------------------------------------
+
+// One file per request: "now" or "spinup" (or "cancel"), "1" for subfolders,
+// and the user share path (/mnt/user/SHARE/...), one per line. The folder is
+// listed on every array disk right away (that may spin disks up, which the
+// user accepted by asking) and its files are marked like spin-up promotions.
+static const std::string PROMOTE_DIR = "/var/run/unspind.promote.d";
+
+static void mark_tree(const std::string& dir, bool recursive, const std::string& rule, int& added, int& excluded) {
+    DIR* d = opendir(dir.c_str());
+    if (!d) return;
+    std::vector<std::string> subdirs;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != nullptr) {
+        std::string name = ent->d_name;
+        if (name == "." || name == ".." || name.compare(0, 8, ".unspin.") == 0) continue;
+        auto path = dir + "/" + name;
+        auto type = ent->d_type;
+        if (type == DT_UNKNOWN) {
+            struct stat st;
+            if (lstat(path.c_str(), &st) != 0) continue;
+            type = S_ISDIR(st.st_mode) ? DT_DIR : S_ISREG(st.st_mode) ? DT_REG : DT_UNKNOWN;
+        }
+        if (type == DT_DIR) { if (recursive) subdirs.push_back(path); continue; }
+        if (type != DT_REG) continue;
+        if (std::any_of(_cfg.exclude_patterns.begin(), _cfg.exclude_patterns.end(),
+                        [&](const std::string& ex) { return !ex.empty() && path.find(ex) != std::string::npos; })) {
+            excluded++;
+            continue;
+        }
+        auto& m = _spinup[path];
+        if (m.rule.empty() || (rule == RULE_PROMOTE_NOW && m.rule != RULE_PROMOTE_NOW)) {
+            if (m.rule.empty()) added++;
+            m = {rule, time(nullptr)};
+        }
+    }
+    closedir(d);
+    for (const auto& s : subdirs) mark_tree(s, true, rule, added, excluded);
+}
+
+static void handle_promote_request(const std::string& file) {
+    std::ifstream f(file);
+    std::string mode, recursive, upath;
+    std::getline(f, mode);
+    std::getline(f, recursive);
+    std::getline(f, upath);
+    f.close();
+    unlink(file.c_str());
+
+    if (mode == "cancel") {
+        auto n = 0;
+        for (auto it = _spinup.begin(); it != _spinup.end(); )
+            if (manual_rule(it->second.rule)) { it = _spinup.erase(it); n++; } else ++it;
+        log_info("Promote now: cancelled " + std::to_string(n) + " requested file(s)");
+        if (n) { spinup_changed(); write_spinup_live_now(); }
+        return;
+    }
+    while (upath.size() > 1 && upath.back() == '/') upath.pop_back();
+    auto rel = upath.rfind(SHARE_MNT + "/", 0) == 0 ? upath.substr(SHARE_MNT.size() + 1) : "";
+    auto share = rel.substr(0, rel.find('/'));
+    if ((mode != "now" && mode != "spinup") || share.empty() ||
+        ("/" + rel + "/").find("/../") != std::string::npos || ("/" + rel + "/").find("/./") != std::string::npos) {
+        log_warn("Promote now: invalid request ignored: " + qpath(upath));
+        return;
+    }
+    auto rule = mode == "now" ? RULE_PROMOTE_NOW : RULE_PROMOTE_SPINUP;
+    if (!share_ok_for(share, rule)) {
+        log_warn("Promote now: share " + share + " has no cache pool to promote into, ignored: " + qpath(upath));
+        return;
+    }
+    auto added = 0, excluded = 0, before = (int)_spinup.size();
+    for (const auto& d : _disks) {
+        if (d.mount.empty()) continue;
+        auto base = d.mount + "/" + rel;
+        struct stat st;
+        if (lstat(base.c_str(), &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) mark_tree(base, recursive == "1", rule, added, excluded);
+        else if (S_ISREG(st.st_mode)) {
+            auto& m = _spinup[base];
+            if (m.rule.empty() || (rule == RULE_PROMOTE_NOW && m.rule != RULE_PROMOTE_NOW)) {
+                if (m.rule.empty()) added++;
+                m = {rule, time(nullptr)};
+            }
+        }
+    }
+    log_info("[" + rule + "] " + std::to_string(added) + " file(s) on the array marked in " + qpath(upath) +
+             (recursive == "1" ? " and its subfolders" : "") +
+             (excluded ? ", " + std::to_string(excluded) + " skipped by Exclude Patterns" : "") +
+             (mode == "now" ? " - promoting now, spinning disks up if needed"
+                            : " - promoting when their disks spin up"));
+    if ((int)_spinup.size() != before || added) { spinup_changed(); write_spinup_live_now(); }
+    _marks_wait_until = 0;
+}
+
+// Checked on every main-loop pass: a stat() of the directory, unless it changed.
+static void check_promote_requests() {
+    static struct timespec last = {0, 0};
+    struct stat st;
+    if (stat(PROMOTE_DIR.c_str(), &st) != 0) return;
+    if (st.st_mtim.tv_sec == last.tv_sec && st.st_mtim.tv_nsec == last.tv_nsec) return;
+    last = st.st_mtim;
+    DIR* d = opendir(PROMOTE_DIR.c_str());
+    if (!d) return;
+    std::vector<std::string> files;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != nullptr)
+        if (ent->d_name[0] != '.') files.push_back(PROMOTE_DIR + "/" + ent->d_name);
+    closedir(d);
+    std::sort(files.begin(), files.end());   // names start with the time: oldest first
+    for (const auto& f : files) handle_promote_request(f);
 }
 
 // ---------------------------------------------------------------------------
@@ -3538,6 +3721,7 @@ int main(int argc, char* argv[]) {
     signal(SIGUSR1,  sig_handler);
     signal(SIGUSR2,  sig_handler);
     signal(SIGRTMIN, sig_handler);
+    signal(SIGRTMIN + 1, sig_handler);
 
     log_info("=== unspind starting ===");
     crash_prepare();
@@ -3594,17 +3778,24 @@ int main(int argc, char* argv[]) {
             pfd.fd = fan_fd;
             _atime_warned.clear();
             check_pool_atime();
-            if (_cfg.promote_on_spinup == "no" && !_spinup.empty()) {
-                log_info("Promotion and spin-ups set to skip - dropping " +
-                         std::to_string(_spinup.size()) + " marked file(s)");
-                _spinup.clear();
-                spinup_changed();
+            if (_cfg.promote_on_spinup == "no") {   // requested promotions stay
+                auto n = 0;
+                for (auto it = _spinup.begin(); it != _spinup.end(); )
+                    if (!manual_rule(it->second.rule)) { it = _spinup.erase(it); n++; } else ++it;
+                if (n) {
+                    log_info("Promotion and spin-ups set to skip - dropping " + std::to_string(n) + " marked file(s)");
+                    spinup_changed();
+                }
             }
         }
 
-        auto ret = poll(&pfd, 1, wake_watch_active() ? WAKE_POLL_MS : POLL_TIMEOUT_MS);
+        // Marked files waiting: handle events, then go on with the next file at once.
+        auto ret = poll(&pfd, 1, _marks_busy ? 0 : wake_watch_active() ? WAKE_POLL_MS : POLL_TIMEOUT_MS);
         if (ret < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (_promote_request) { _promote_request = 0; check_promote_requests(); }
+                continue;
+            }
             log_err("poll: " + std::string(strerror(errno)));
             break;
         }
@@ -3614,7 +3805,9 @@ int main(int argc, char* argv[]) {
         } else if (pfd.revents & POLLIN) {
             process_events(fan_fd);
         }
+        check_promote_requests();
         promote_marked();
+        flush_spinup();   // RAM copy within seconds, flash copy hourly
 
         // Checked on every pass, not only on poll timeouts: a busy server may
         // never go POLL_TIMEOUT_MS without a file event.
