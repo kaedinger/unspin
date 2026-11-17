@@ -51,6 +51,11 @@ ENABLE_POOL_ATIME="no"
 # array disk (yes/no). Shown in the Disk Wake-ups section of the settings page.
 TRACK_WAKEUPS="yes"
 
+# Promotion and Spin-ups: a rule fired while the file's disk was spun down.
+# Promote it once the disk spins up for another reason (yes), once the disk and
+# parity both spin up (parity), or don't promote it, leaving it on the array (no).
+PROMOTE_ON_SPINUP="yes"
+
 # Comma-separated partial path patterns to exclude from tiering
 EXCLUDE_PATTERNS="/qbittorrent"
 

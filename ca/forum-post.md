@@ -22,7 +22,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 
 - **Promotion waits until the file is closed everywhere.** A movie you're watching keeps playing from the array and is promoted after you stop; the next open picks up the cache copy. (No live switching during playback.)
 - **A file is never lost, doubled, left half-copied or missing from the share.** The copy stays invisible until it's complete and is only swapped in if nobody moved, changed, deleted or opened the file in the meantime. Whatever you do with the file during a promotion wins, and Unspin simply tries again later. Even a crash mid-promotion is cleaned up on the next start.
-- **Unspin never wakes a sleeping disk.** A file can be read from RAM while its disk sleeps; it isn't promoted then (removing the array copy would wake the disk and parity), but on a later access with the disk awake.
+- **Unspin never spins up a data disk.** A file read from RAM while its disk is spun down is marked and promoted once the disk spins up for another reason. Removing the original from the array is a write, so a spun-down parity disk spins up for it, unless you let Unspin wait for parity too or skip such promotions. Every decision is logged.
 
 ## Features
 

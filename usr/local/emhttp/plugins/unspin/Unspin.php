@@ -273,6 +273,7 @@ dt.hf-share-name {
 .hf-stats-grid > span { white-space: nowrap; }
 .hf-stats-grid > span:nth-child(-n+4) { opacity: 0.7; }
 .hf-stats-sum { font-weight: bold; }
+.hf-spinup-wait { margin-top: 0.4em; opacity: 0.8; }
 
 /* Disk wake-ups: a long cause (an SMB user@client) is cut, not widening the grid */
 .hf-wake-grid { grid-template-columns: auto auto auto auto minmax(0, 1fr); }
@@ -427,6 +428,22 @@ dt.hf-share-name {
       <?= opt('no',  $c['TRACK_WAKEUPS'] ?? 'yes', 'No') ?>
     </select>
     <div class="hf-help">Log and count which program, container, VM or SMB client wakes a sleeping array disk, shown under <strong>Disk Wake-ups</strong> above. Works on every array disk Unspin watches, excluded shares included, and keeps running while Unspin is paused. <strong>Default: Yes.</strong></div>
+  </dd>
+
+  <dt class="hf-has-help" onclick="hfToggleHelp(this)">Promotion and Spin-ups</dt>
+  <dd>
+    <select name="PROMOTE_ON_SPINUP" id="hf_PROMOTE_ON_SPINUP">
+      <?= opt('yes',    $c['PROMOTE_ON_SPINUP'] ?? 'yes', 'Promote when the disk spins up') ?>
+      <?= opt('parity', $c['PROMOTE_ON_SPINUP'] ?? 'yes', 'Promote when the disk and parity spin up') ?>
+      <?= opt('no',     $c['PROMOTE_ON_SPINUP'] ?? 'yes', "Don't promote (skip)") ?>
+    </select>
+    <div class="hf-help">What happens when a rule fires for a file whose array disk is spun down. That happens when the file was read from RAM, or when the disk spun down while the promotion was waiting: for the file to be closed, for the Mover, or for a pause. Promoting right away would spin the disk up, because the original is removed from the array. Unspin never does that; instead:
+      <ul>
+        <li><strong>Promote when the disk spins up:</strong> the file is marked and promoted as soon as its disk spins up for another reason. Removing the original is a write to the array, so a spun-down parity disk spins up for it.</li>
+        <li><strong>Promote when the disk and parity spin up:</strong> the file waits until both are spinning, so the promotion spins up nothing at all. On a server that mostly reads, parity may only spin up for the next Mover run, so files can wait a long time.</li>
+        <li><strong>Don't promote (skip):</strong> the file stays on the array for now, until a promotion rule fires again.</li>
+      </ul>
+      Marked files are listed under <strong>Promoted to Cache</strong> and survive a reboot. Every decision is logged: when a file is marked or skipped, and when a disk spins up and its marked files are promoted. <strong>Default: Promote when the disk spins up.</strong></div>
   </dd>
 
   <dt class="hf-has-help" onclick="hfToggleHelp(this)">Pool Access Times</dt>
@@ -1104,7 +1121,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
                 'LARGE_SHORT_MIN_ACCESSES','LARGE_SHORT_WINDOW_MINS',
                 'LARGE_LONG_MIN_ACCESSES','LARGE_LONG_WINDOW_HOURS',
                 'EXCLUDE_PATTERNS','DRY_RUN','LOG_LEVEL','LOG_EXCLUDED_SHARES',
-                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC','TRACK_WAKEUPS','ENABLE_POOL_ATIME',
+                'LOG_MAX_SIZE_MB','LOG_TRIM_SIZE_MB','PAUSE_ON_RSYNC','TRACK_WAKEUPS','PROMOTE_ON_SPINUP','ENABLE_POOL_ATIME',
                 'MOUNT_WAIT_TIMEOUT_MINS','MOUNT_RETRY_INTERVAL_SECS',
                 'RULE1_ENABLED','RULE1_FALLTHROUGH','RULE2_ENABLED','RULE3_ENABLED',
                 'RULE3_MIN_READS'];

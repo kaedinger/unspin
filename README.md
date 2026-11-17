@@ -36,7 +36,7 @@ Make sure this does what you want! There's a dry-run mode; use it!
 
 Promotion is always deferred until all open handles on the file are closed. Unlinking the source while a reader (SMB, NFS, local process) still holds an fd would cause the client to lose the file - shfs does not redirect to the cache copy mid-stream. By waiting for close, the next open transparently picks up the promoted copy.
 
-Unspin can't wake a sleeping disk, even in rare cases. A file can be read from RAM while its disk sleeps; it is not promoted then, because removing the array copy would wake the disk (and parity). It gets promoted on a later access with the disk awake. Unspin takes the spin state from Unraid and never touches a sleeping disk itself.
+Unspin never spins up a data disk. A file can be read from RAM while its disk is spun down, or the disk can spin down while a promotion waits (for the file to be closed, for the Mover or for a pause). By default the file is then marked and promoted as soon as its disk spins up for another reason; the marks survive a reboot. Unspin takes the spin state from Unraid and never touches a spun-down disk itself. Parity is different: a promotion removes the original from the array, which is a write, so a spun-down parity disk spins up for it. The setting Promotion and Spin-ups can wait for parity too, so a promotion spins up nothing at all, or skip such promotions. Every decision is logged.
 
 There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mover Tuning.
 
@@ -127,6 +127,7 @@ unspin/
 | `RULE3_MIN_READS` | `5` | Thumbnail filter: skip opens with fewer reads than this (0 = disabled) |
 | `PAUSE_ON_RSYNC` | `yes` | Also pause while any `rsync` process is running (covers tools like Unbalanced or Mover Tuning's rsync-based transfers). Unraid's mover itself is always detected regardless of this setting. |
 | `TRACK_WAKEUPS` | `yes` | Log and count which program, container, VM or SMB client wakes a sleeping array disk; shown under Disk Wake-ups on the settings page. Keeps running while Unspin is paused. |
+| `PROMOTE_ON_SPINUP` | `yes` | Promotion and Spin-ups: a rule fired while the file's disk was spun down. Promote the file once the disk spins up for another reason (`yes`), once the disk and parity both spin up (`parity`), or don't promote it (`no`): the file stays on the array unless a later access fires a rule again while its disk is spinning. |
 | `ENABLE_POOL_ATIME` | `no` | Turn access times on for the pools Unspin promotes into, for Mover Tuning's "Use ATIME" filter (see below). Btrfs/XFS pools are remounted `relatime` (re-applied after every array start); ZFS datasets get `atime=on relatime=on` (untested). Switching it off only undoes Unspin's own changes, now or at the next array start. |
 | `DRY_RUN` | `yes` | Log promotion decisions without moving files |
 | `LOG_LEVEL` | `info` | `info` or `debug` |
