@@ -1224,7 +1224,20 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
       if (dd) help = dd.querySelector('.hf-help');
     }
     if (!help) return;
-    help.classList.toggle('open');
+    // Animated to the content's real height (plus padding and border), then
+    // left unlimited, so no help text is ever cut off, at any window width.
+    if (help.classList.contains('open')) {
+      help.style.maxHeight = help.scrollHeight + 'px';   // from 'none' to a number, so it can animate
+      help.offsetHeight;                                  // apply that before closing
+      help.style.maxHeight = '';
+      help.classList.remove('open');
+    } else {
+      help.style.maxHeight = (help.scrollHeight + 16) + 'px';
+      help.classList.add('open');
+      setTimeout(function () {
+        if (help.classList.contains('open')) help.style.maxHeight = 'none';
+      }, 260);
+    }
     // Help text rendered far from its click target (e.g. Detected Shares help
     // sits below the share table) — scroll it into view after expansion.
     if (detached && help.classList.contains('open')) {
