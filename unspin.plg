@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- fix: the settings page shows a new version as soon as the Plugins page does
+
 ### 2026.11.17.40213-beta
 - fix: promotions also keep the original file out of RAM
 - docs: beta channel update

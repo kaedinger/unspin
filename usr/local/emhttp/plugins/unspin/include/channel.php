@@ -36,11 +36,14 @@ function channel_installed() {
     return ['version' => $info['version'], 'channel' => $channel];
 }
 
-// newest .plg of a channel, cached for UNSPIN_CH_TTL; a stale copy is used when GitHub is unreachable
+// newest .plg of a channel, cached for UNSPIN_CH_TTL; a stale copy is used when GitHub is unreachable.
+// Also refreshed once Unraid's own update check (Plugins page) ran after the cache was filled,
+// so this page never shows less than the Plugins page.
 function channel_latest($ch, $refresh) {
     @mkdir(UNSPIN_CH_CACHE, 0755, true);
     $file  = UNSPIN_CH_CACHE . "/$ch.plg";
-    $fresh = is_file($file) && time() - filemtime($file) < UNSPIN_CH_TTL;
+    $fresh = is_file($file) && time() - filemtime($file) < UNSPIN_CH_TTL &&
+             @filemtime('/tmp/plugins/unspin.plg') <= filemtime($file);
     if ($refresh || !$fresh) {
         $tmp = "$file.tmp";
         $rc  = 1;
