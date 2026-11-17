@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name       "unspin">
   <!ENTITY author     "kaedinger">
-  <!ENTITY version   "2026.11.15.86229">
+  <!ENTITY version   "2026.11.17.40213-beta">
   <!ENTITY launch     "Utilities/Unspin">
   <!ENTITY releaseURL "https://github.com/kaedinger/unspin/releases/latest/download">
   <!ENTITY pluginURL  "&releaseURL;/unspin.plg">
@@ -19,7 +19,7 @@
 >
 
 <CHANGES>
-### next
+### 2026.11.17.40213-beta
 - fix: promotions also keep the original file out of RAM
 - docs: beta channel update
 - feat: Promotion and Spin-ups, a file whose disk was spun down when its rule fired is promoted once the disk spins up for another reason, optionally waiting for parity too
