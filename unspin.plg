@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- the settings page says Start/Stop Unspin instead of Daemon
+
 ### 2026.11.17.43443-beta
 - fix: the settings page shows a new version as soon as the Plugins page does
 - feat: Promote Now, promote a folder of a user share on request, right away or once its disks spin up anyway, also via rc.unspin promote

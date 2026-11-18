@@ -141,11 +141,11 @@ if ($action === 'save') {
 
 } elseif ($action === 'start') {
     if (file_exists($rc_script)) exec("$rc_script start < /dev/null > /dev/null 2>&1 &");
-    $msg = 'Daemon start requested.';
+    $msg = 'Unspin start requested.';
 
 } elseif ($action === 'stop') {
     if (file_exists($rc_script)) exec("$rc_script stop < /dev/null > /dev/null 2>&1 &");
-    $msg = 'Daemon stopped.';
+    $msg = 'Unspin stopped.';
 
 } elseif ($action === 'clear_log') {
     file_put_contents(UNSPIN_LOG, '');

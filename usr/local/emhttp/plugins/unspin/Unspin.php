@@ -320,14 +320,14 @@ dt.hf-share-name {
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
 
 <dl>
-  <dt>Daemon Status</dt>
+  <dt>Status</dt>
   <dd>
     <strong id="hf-status" style="<?= $is_running ? ($is_paused ? 'color:#facc15' : 'color:#4ade80') : 'color:#f87171' ?>">
       <?= $is_running ? ('Running' . $pause_label) : 'Stopped' ?>
     </strong>
     &nbsp;&nbsp;
     <button type="button" id="hf-toggle-btn" onclick="hfDaemonToggle()">
-      <?= $is_running ? 'Stop Daemon' : 'Start Daemon' ?>
+      <?= $is_running ? 'Stop Unspin' : 'Start Unspin' ?>
     </button>
   </dd>
 
@@ -1007,7 +1007,7 @@ var HF_RECENT   = { offset: <?= json_encode($recent_offset) ?>, lists: <?= json_
     }
     if (btn) {
       btn.disabled  = false;
-      btn.innerHTML = running ? 'Stop Daemon' : 'Start Daemon';
+      btn.innerHTML = running ? 'Stop Unspin' : 'Start Unspin';
     }
   }
 
