@@ -36,7 +36,7 @@ Make sure this does what you want! There's a dry-run mode; use it!
 
 Promotion is always deferred until all open handles on the file are closed. Unlinking the source while a reader (SMB, NFS, local process) still holds an fd would cause the client to lose the file - shfs does not redirect to the cache copy mid-stream. By waiting for close, the next open transparently picks up the promoted copy.
 
-Unspin never spins up a data disk. A file can be read from RAM while its disk is spun down, or the disk can spin down while a promotion waits (for the file to be closed, for the Mover or for a pause). By default the file is then marked and promoted as soon as its disk spins up for another reason; the marks survive a reboot. Unspin takes the spin state from Unraid and never touches a spun-down disk itself. Parity is different: a promotion removes the original from the array, which is a write, so a spun-down parity disk spins up for it. The setting Promotion and Spin-ups can wait for parity too, so a promotion spins up nothing at all, or skip such promotions. Every decision is logged.
+Unspin never spins up a data disk. A file can be read from RAM while its disk is spun down, or the disk can spin down while a promotion waits (for the file to be closed, for the Mover or for a pause). By default the file is then marked and promoted as soon as its disk spins up for another reason; the marks survive a reboot. Marked files also wait for room when the pool is full, instead of being dropped. Unspin takes the spin state from Unraid and never touches a spun-down disk itself. Parity is different: a promotion removes the original from the array, which is a write, so a spun-down parity disk spins up for it. The setting Promotion and Spin-ups can wait for parity too, so a promotion spins up nothing at all, or skip such promotions. Every decision is logged.
 
 There's no explicit cold demotion - for now we rely on Unraid's mover or CA's Mover Tuning.
 
@@ -279,6 +279,14 @@ A file is never lost, doubled, left half-copied or missing from the share: whate
 <img src="images/scr1_settings.png" alt="Screenshot: Settings 1" />
 
 <img src="images/scr2_settings.png" alt="Screenshot: Settings 2" />
+
+<img src="images/scr_cache_statistics.png" alt="Screenshot: Promoted to Cache statistics" />
+
+<img src="images/scr_spinup_statistics.png" alt="Screenshot: Disk Spin-ups statistics" />
+
+<img src="images/scr_latest_spinups.png" alt="Screenshot: Latest Disk Spin-ups per disk" />
+
+<img src="images/scr_detected_shares.png" alt="Screenshot: Detected Shares" />
 
 <img src="images/scr3_log.png" alt="Screenshot: Log view" />
 

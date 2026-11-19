@@ -21,6 +21,7 @@
 <CHANGES>
 ### next
 - the settings page says Start/Stop Unspin instead of Daemon
+- docs: new screenshots
 
 ### 2026.11.17.43443-beta
 - fix: the settings page shows a new version as soon as the Plugins page does
