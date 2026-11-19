@@ -1,0 +1,287 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name       "unspin">
+  <!ENTITY author     "kaedinger">
+  <!ENTITY version   "2026.11.19.74361">
+  <!ENTITY launch     "Utilities/Unspin">
+  <!ENTITY releaseURL "https://github.com/kaedinger/unspin/releases/latest/download">
+  <!ENTITY pluginURL  "https://raw.githubusercontent.com/kaedinger/unspin/channel/unspin.plg">
+]>
+
+<PLUGIN
+  name="&name;"
+  author="&author;"
+  version="&version;"
+  launch="&launch;"
+  pluginURL="&pluginURL;"
+  icon="fire"
+  description="Automatic file tiering for Unraid. Watches file accesses in real time via fanotify and promotes hot files to fast storage (cache/NVMe). Cold demotion is handled by Unraid's mover. Fully configurable via the Utilities settings page."
+>
+
+<CHANGES>
+### 2026.11.19.74361
+- Beta channel: identical to stable release 2026.11.19.74361
+- feat: Promotion and Spin-ups, a file whose disk was spun down when its rule fired is promoted once the disk spins up for another reason, optionally waiting for parity too
+- feat: Promote Now, promote a folder of a user share on request, right away or once its disks spin up anyway, also via rc.unspin promote
+- fix: a promotion held back by the Mover or rsync runs once it's done
+- fix: promotions also keep the original file out of RAM
+- fix: the settings page shows a new version as soon as the Plugins page does
+- fix: long help texts on the settings page are shown in full
+- ui: "Disk Wake-ups" is now called "Disk Spin-ups"
+- ui: the settings page says Start/Stop Unspin instead of Daemon
+- docs: a promotion can spin up a sleeping parity disk
+- docs: beta channel, new screenshots
+
+### 2026.11.15.86229
+- feat: beta channel, switch between stable and beta at the bottom right of the settings page, with an Update button for newer versions
+
+### 2026.11.15.65769
+- docs: clearer wording in changelog, README and help texts
+- feat: promotions don't push other data out of RAM
+- fix: Detected Shares ignores settings files of deleted shares
+
+### 2026.11.12.54597
+- feat: Disk Wake-ups shows which program, container, VM or SMB client woke a sleeping disk
+- fix: Unspin can no longer wake a sleeping disk, even in rare cases, i.e. a file read from RAM or check for ZFS datasets
+- fix: handle a full /var/log gracefully
+- fix: a file could miss its promotion when the kernel merged its events
+- feat: if the daemon dies unexpectedly, the log says why, and the next start notes the unclean stop
+- fix: Recently Accessed Files shows the date for entries before today, not just the time
+- fix: prevent additional Unspin instances from running
+- fix: a file changed during its promotion is never lost or doubled
+- cleaned up code
+
+### 2026.11.07.56244
+- fix: unspind could crash while looking for the Mover among the running programs, if one of them exited during the check
+- fix: an invalid number in the settings no longer stops unspind on a reload; the previous value is kept and a warning logged
+
+### 2026.11.05.60628
+- feat: promotion statistics per pool on the settings page
+- feat: Detected Shares folds into a summary line
+- cosmetics: Pool Fill Limits rows no longer reach past the settings column
+- feat: pause locks can expire (rc.unspin pause NAME --ttl 15m) (GH #13)
+- fix: detect the Mover of Mover Tuning 2026.10.30
+- feat: status also shows pauses by Mover, rsync or signal
+- fix: installed files are owned by root
+
+### 2026.10.17.48740
+- fix: correct usage for ZFS pools with child datasets (GH #11)
+- non-ZFS pool fill is calculated like df
+- promoted files are no longer demoted right away by Mover Tuning's ATIME filter (GH #9)
+- new setting Pool Access Times, for Mover Tuning's ATIME filter (GH #9)
+- the once-a-minute checks also run on busy servers
+- a stuck deferred promotion goes through after 10 minutes (GH #10)
+- debug log: closes of a file that still has other handles open are now logged with the remaining open count
+
+### 2026.09.20.50926
+- install: pluginURL points at the latest GitHub release
+
+### 2026.09.18.38737
+- ci: release workflow pushes the corrected SHA256 to main
+
+### 2026.09.14.59405
+- fix: promotions no longer get stuck when open/close counts drift
+- install: plugin download verified by SHA256 and cached on the flash
+- pkg: `make package` now computes and writes that SHA256 into unspin.plg automatically
+- fix: shares on ZFS array disks are promoted (GH #8)
+
+### 2026.07.28.37749
+- fix: Scan Paths rejects cache pool mounts
+- install: drop one-time `removepkg Unspin` migration line
+- fix: two quick pause calls could leave the daemon unpaused
+- fix: rc.unspin help shows which commands take a lock name
+- docs: "Exclude skipped shares" needs "Include excluded shares in Debug log"
+- feat: "5 Recently Accessed Files" panels now show a time column for each entry
+- fix: recent-files panels now collapse to a single column on narrow or portrait screens
+- feat: Activity Log shows up to 1000 lines in Debug mode (was 200)
+- feat: prevent "Exclude skipped shares" show nothing in flooded log by doing actual log filtering
+
+### 2026.07.10.38411
+- fix: wait for scan paths to mount on slow boots (GH #3)
+- feat: configurable mount wait timeout and retry interval
+- feat: Unraid notifications while waiting for storage
+- fix: a scan path counts as ready only once it is mounted
+- fix: log trimming is size-based, checked continuously; prevent out of memory errors
+- fix: log also trims when its disk is nearly full, and keeps checking on schedule while paused
+- fix: settings page crash when switching to Debug on a large log
+- feat: on debug logging, the settings page now shows condensed "5 Recently Accessed Files" panels per watched disk (GH #4)
+- feat: new checkbox to exclude skipped shares from both these panels and the log view (GH #4)
+- feat: new setting Include excluded shares in Debug log
+- fix: look up the nobody user's uid/gid instead of hardcoding it
+- fix: log an error if that lookup fails or if a chown on a created directory or promoted file fails
+- refactor: move duplicate config/share-parsing helpers (load_cfg, daemon_running, share detection) to shared include
+- docs: document the mount-wait, log-trim and rsync-pause settings
+
+### 2026.04.29.43847
+- docs: fix plugin title rendering in README (broken bold markdown)
+
+### 2026.04.29.42607
+- fix: README shows on the Plugins page
+- pkg: TXZ filename lowercased to unspin-VERSION-x86_64-1.txz
+- install: one-time removepkg of legacy capital-U package on upgrade to keep slackware pkg db clean
+
+### 2026.04.29.37949
+- ui: per-share Status column updates live when ticking/unticking Watch checkboxes (no reload required)
+- ui: clicking the Detected Shares label scrolls the help text into view since it sits below the share list
+- ui: Detected Shares help text reminds you to click Apply to save changes
+
+### 2026.04.28.72996
+- ui: footer Sponsor link now points to GitHub Sponsors
+- docs: README and forum post updated for per-share pool routing and Detected Shares
+
+### 2026.04.28.71931
+- ci: accept YYYY.MM.DD.SECS-dev tags, publish as GitHub prereleases for staged testing
+- feat: per-share routing - promotion destinations now come from each share's shareCachePool; HOT_PATH removed
+- feat: per-pool fill thresholds - MAX_FILL_PERCENT_pool replaces the single MAX_HOT_FILL_PERCENT; legacy value migration
+- ui: cosmetics
+- daemon: skip shares unless shareUseCache is yes or prefer and a cache pool is configured
+- init: rc.unspin stop also kills orphan unspind processes not tracked in the pidfile
+- docs: add README.md shown on the Unraid plugin page
+
+### 2026.04.23.50591
+- fix: directories created by a promotion get mode 0777
+- ui: paused status shows the reason
+- ui: footer label renames; fix stray closing tag and stale tooltip
+
+### 2026.04.03.44482
+- add support forum URL to CA template, settings page footer, and README badge
+
+### 2026.04.02.83096
+- display version number in the footer
+- final release preparations: screenshots, forum post, readme, license
+
+### 2026.04.02.55974
+- fix: human_size used decimal (1e6) while parse_size used binary (1024) units — now both use binary
+- fix: a pause or rsync could block later promotions
+- log full config on SIGHUP reload, not just watched mounts
+- docs: add remote pause/unpause section for backup scripts
+
+### 2026.04.02.46831
+- process external transfer detection (rsync/mover) outside of monitored events
+- cosmetics and update Claude generated documentation, comments, and logs
+- fix: saving settings while paused no longer unpauses the daemon (SIGHUP reload instead of restart)
+- defer promotion until all open handles are closed (prevents file-not-found errors for SMB/NFS clients)
+
+### 2026.04.01.59747
+- Initial release - reworked from the now-deprecated Hotfile project
+</CHANGES>
+
+<!--
+  ============================================================
+  Install/upgrade the plugin package (TXZ archive)
+  ============================================================
+-->
+<FILE Name="/boot/config/plugins/&name;/&name;.txz">
+<URL>https://github.com/kaedinger/unspin/releases/download/&version;/&name;-&version;-x86_64-1.txz</URL>
+<SHA256>e35f04e0ab408cfad7e4437c8663192d888320fe18a8ed5ebe0a528da6ca4163</SHA256>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+echo "                                                       "
+echo "                                                       "
+echo "                                  ##                   "
+echo "                                  #####                "
+echo "                                   ######              "
+echo "                                   ########            "
+echo "                                  ###########          "
+echo "                                 #############         "
+echo "                               ################        "
+echo "                             ##################        "
+echo "                           ####################        "
+echo "                         ######################        "
+echo "                       ########################        "
+echo "                      #########################        "
+echo "                      ########################         "
+echo "                      #######################          "
+echo "                      #####################            "
+echo "                      ###################              "
+echo "                      #################                "
+echo "                       ##############                  "
+echo "                        ###########                    "
+echo "                         ##########                    "
+echo "                           #######                     "
+echo "                             ######                    "
+echo "                                ###                    "
+echo "                                                       "
+echo "                                                       "
+echo "                                                       "
+echo "              #########################################"
+VER="&version;"
+LEFT="  U N S P I N  "
+RIGHT="v${VER}  "
+PAD=$(( 39 - ${#LEFT} - ${#RIGHT} ))
+printf "              #%s%${PAD}s%s#\n" "$LEFT" "" "$RIGHT"
+echo "              #########################################"
+echo ""
+
+# Stop daemon before replacing files
+/etc/rc.d/rc.unspin stop 2>/dev/null
+
+# Remove old version if present
+removepkg &name; 2>/dev/null
+
+# Install the package (fetched above by the installer, verified against SHA256)
+installpkg /boot/config/plugins/&name;/&name;.txz
+</INLINE>
+</FILE>
+
+<!--
+  =====================================================
+  Post-install: set up config defaults and start daemon
+  =====================================================
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+# Create config dir
+mkdir -p /boot/config/plugins/unspin
+
+# Copy default config if none exists, then auto-detect array disks
+CFG=/boot/config/plugins/unspin/unspin.cfg
+if [ ! -f "$CFG" ]; then
+  cp /usr/local/emhttp/plugins/unspin/unspin.cfg.default "$CFG"
+
+  # Detect mounted array disks (/mnt/disk1, /mnt/disk2, …)
+  DISK_PATHS=$(awk '$2 ~ /^\/mnt\/disk[0-9]+$/ {print $2}' /proc/mounts | sort -V | paste -sd,)
+  if [ -n "$DISK_PATHS" ]; then
+    sed -i "s|SCAN_PATHS=.*|SCAN_PATHS=\"$DISK_PATHS\"|" "$CFG"
+    echo "Unspin: auto-detected array disks: $DISK_PATHS"
+  else
+    echo "Unspin: no array disks detected - set SCAN_PATHS manually in the settings page."
+  fi
+fi
+
+touch /var/log/unspin.log
+chmod +x /usr/local/sbin/unspind /etc/rc.d/rc.unspin 2>/dev/null
+
+# Start daemon if service is enabled
+source "$CFG"
+if [ "$SERVICE" = "enabled" ]; then
+  /etc/rc.d/rc.unspin start
+fi
+
+echo "Unspin plugin installed successfully."
+</INLINE>
+</FILE>
+
+<!--
+  ===============================================
+  Removal: stop daemon, keep user config on flash
+  ===============================================
+-->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+# Stop the daemon
+/etc/rc.d/rc.unspin stop 2>/dev/null
+
+# Remove package
+removepkg &name;
+
+# Release channel cache and notes
+rm -rf /tmp/unspin-channel /tmp/plugins/unspin-stable.txt /tmp/plugins/unspin-beta.txt
+
+echo "Unspin plugin removed. Config preserved at /boot/config/plugins/unspin/"
+</INLINE>
+</FILE>
+
+</PLUGIN>
