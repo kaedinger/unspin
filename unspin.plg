@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name       "unspin">
   <!ENTITY author     "kaedinger">
-  <!ENTITY version   "2026.11.17.43443-beta">
+  <!ENTITY version   "2026.11.19.74361">
   <!ENTITY launch     "Utilities/Unspin">
   <!ENTITY releaseURL "https://github.com/kaedinger/unspin/releases/latest/download">
   <!ENTITY pluginURL  "&releaseURL;/unspin.plg">
@@ -19,24 +19,17 @@
 >
 
 <CHANGES>
-### next
-- the settings page says Start/Stop Unspin instead of Daemon
-- docs: new screenshots
-
-### 2026.11.17.43443-beta
-- fix: the settings page shows a new version as soon as the Plugins page does
-- feat: Promote Now, promote a folder of a user share on request, right away or once its disks spin up anyway, also via rc.unspin promote
-- feat: marked files wait for pool space instead of being dropped when the pool is full
-- fix: marked files are promoted one after another without pausing, and their count on the settings page keeps up
-
-### 2026.11.17.40213-beta
-- fix: promotions also keep the original file out of RAM
-- docs: beta channel update
+### 2026.11.19.74361
 - feat: Promotion and Spin-ups, a file whose disk was spun down when its rule fired is promoted once the disk spins up for another reason, optionally waiting for parity too
+- feat: Promote Now, promote a folder of a user share on request, right away or once its disks spin up anyway, also via rc.unspin promote
 - fix: a promotion held back by the Mover or rsync runs once it's done
-- docs: a promotion can spin up a sleeping parity disk
+- fix: promotions also keep the original file out of RAM
+- fix: the settings page shows a new version as soon as the Plugins page does
 - fix: long help texts on the settings page are shown in full
-- ui: "Disk Wake-ups" is now consistently called "Disk Spin-ups"
+- ui: "Disk Wake-ups" is now called "Disk Spin-ups"
+- ui: the settings page says Start/Stop Unspin instead of Daemon
+- docs: a promotion can spin up a sleeping parity disk
+- docs: beta channel, new screenshots
 
 ### 2026.11.15.86229
 - feat: beta channel, switch between stable and beta at the bottom right of the settings page, with an Update button for newer versions
