@@ -21,6 +21,7 @@
 <CHANGES>
 ### next
 - fix: promotions always keep a file's permissions, owner and attributes
+- fix: a promotion held back by the Mover, rsync or a pause runs within a minute once it's done
 - docs: Fix Common Problems' warning on the beta channel can be ignored
 
 ### 2026.11.19.74361

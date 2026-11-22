@@ -149,6 +149,7 @@ struct AccessRecord {
     std::string        held_by;                 // that holder, logged once at INFO
     time_t             asleep_logged   = 0;     // sleep period (spundown_at) of the last "not waking it" INFO line
     bool               transfer_logged = false; // "active, deferring" logged at INFO for this deferral
+    bool               retry_asap      = false; // held back by a pause, Mover or rsync: tried again once it's over
 };
 
 struct ShareInfo {
@@ -2753,6 +2754,7 @@ static void try_promote(const std::string& path, int64_t size, const std::string
                          AccessRecord& rec, const PromoteDecision& dec) {
     if (rec.promoted) return;
     rec.pending_promote = false;  // this attempt is the deferred one, too
+    rec.retry_asap      = false;
     if (auto running = transfers_running(); !running.empty()) {
         // Stays pending: promote_stale_pending() tries again once it's done.
         auto msg = "[" + dec.rule + "] " + running + " active, deferring: " + path;
@@ -2760,6 +2762,7 @@ static void try_promote(const std::string& path, int64_t size, const std::string
         else                      { log_debug(msg); }
         rec.pending_promote = true;
         rec.pending_dec     = dec;
+        rec.retry_asap      = true;
         return;
     }
     rec.transfer_logged = false;
@@ -2889,6 +2892,7 @@ static void handle_event(const std::string& path, EvType ev) {
         log_debug("[promoted -> reset] hot copy gone, re-evaluating: " + path);
         rec.promoted        = false;
         rec.pending_promote = false;
+        rec.retry_asap      = false;
     }
 
     auto now = time(nullptr);
@@ -2959,6 +2963,10 @@ static void handle_event(const std::string& path, EvType ev) {
 
         if (skip_counting) {
             rec.open_reads = -1;
+            // The close a waiting promotion needed: promote_stale_pending()
+            // runs it once the pause, Mover or rsync is over.
+            if (!rec.promoted && rec.pending_promote && rec.open_count == 0 && !rec.held_elsewhere)
+                rec.retry_asap = true;
             return;
         }
 
@@ -3041,7 +3049,8 @@ static void promote_stale_pending() {
         if (!rec.pending_promote) continue;
         // Found open elsewhere: its close may have come between two retries.
         auto held = rec.held_elsewhere && rec.open_count == 0 && now - rec.held_at >= HELD_RETRY_SEC;
-        if (!held && now - rec.last_event < PENDING_PROMOTE_STALE_SEC) continue;
+        auto asap = rec.retry_asap && rec.open_count == 0;  // held back by a pause or transfer, now over
+        if (!held && !asap && now - rec.last_event < PENDING_PROMOTE_STALE_SEC) continue;
         // Even the lstat() below could wake a sleeping disk once the inode
         // left the cache: marked for the disk's next spin-up, or (with
         // PROMOTE_ON_SPINUP off) dropped, and the next access with the disk
@@ -3049,6 +3058,7 @@ static void promote_stale_pending() {
         if (auto disk = rec.pending_dec.rule == RULE_PROMOTE_NOW ? nullptr : sleeping_disk(path)) {
             rec.pending_promote = false;
             rec.held_elsewhere  = false;
+            rec.retry_asap      = false;
             if (!mark_for_spinup(path, rec.pending_dec, *disk))
                 log_info("[" + rec.pending_dec.rule + "] " + disk->name +
                          " is spun down, not spinning it up - skipping the waiting promotion: " + qpath(path));
@@ -3061,7 +3071,7 @@ static void promote_stale_pending() {
             PromoteDecision dec = rec.pending_dec;
             rec.pending_promote = false;
             rec.held_elsewhere  = false;
-            if (!held)
+            if (!held && !asap)
                 log_info("[" + dec.rule + "] Stale pending promotion (" +
                          std::to_string(PENDING_PROMOTE_STALE_SEC / 60) +
                          " min quiet, open_count=" + std::to_string(rec.open_count) +
@@ -3069,6 +3079,7 @@ static void promote_stale_pending() {
             try_promote(path, (int64_t)st.st_size, sname, rec, dec);
         } else {
             rec.pending_promote = false; // gone, no longer a regular file, or no longer promotable
+            rec.retry_asap      = false;
         }
     }
 }
