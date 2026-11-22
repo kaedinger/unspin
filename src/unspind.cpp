@@ -28,7 +28,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
-#include <pwd.h>
 #include <sys/fanotify.h>
 #include <sys/file.h>
 #include <sys/sendfile.h>
@@ -37,6 +36,7 @@
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <sys/vfs.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 // ---------------------------------------------------------------------------
@@ -171,8 +171,6 @@ static std::string _transfer_cached;          // "Mover", "rsync" or "" (none ru
 static time_t      _transfers_checked = 0;
 static bool        _pause_dir_cached  = false;
 static time_t      _pause_dir_checked = 0;
-static uid_t       _nobody_uid       = 99;   // Unraid defaults; updated by init_nobody()
-static gid_t       _nobody_gid       = 100;
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -382,30 +380,80 @@ static std::string human_size(int64_t bytes) {
     return buf;
 }
 
-static void init_nobody() {
-    struct passwd* pw = getpwnam("nobody");
-    if (pw) {
-        _nobody_uid = pw->pw_uid;
-        _nobody_gid = pw->pw_gid;
-    } else {
-        log_err("getpwnam(\"nobody\") failed - falling back to defaults");
+// Copies all extended attributes (Samba's DOS attributes, ACLs, file
+// capabilities) from one open file to another. "" or the error.
+static std::string copy_xattrs(int from, int to, const std::string& what) {
+    std::vector<char> names;
+    for (;;) {
+        auto n = flistxattr(from, nullptr, 0);
+        if (n < 0) return errno == ENOTSUP ? "" : "listxattr(" + what + "): " + strerror(errno);
+        if (n == 0) return "";
+        names.resize(n);
+        n = flistxattr(from, names.data(), names.size());
+        if (n >= 0) { names.resize(n); break; }
+        if (errno != ERANGE) return "listxattr(" + what + "): " + strerror(errno);
     }
-    log_info("Using nobody uid=" + std::to_string(_nobody_uid) + " gid=" + std::to_string(_nobody_gid));
+    std::vector<char> value;
+    for (size_t i = 0; i < names.size(); i += strlen(&names[i]) + 1) {
+        const char* name = &names[i];
+        // XFS's own stored form of the ACLs, which come along as system.posix_acl_*
+        if (!strcmp(name, "trusted.SGI_ACL_FILE") || !strcmp(name, "trusted.SGI_ACL_DEFAULT")) continue;
+        ssize_t v;
+        for (;;) {
+            v = fgetxattr(from, name, nullptr, 0);
+            if (v < 0) break;
+            value.resize(v ? v : 1);
+            v = fgetxattr(from, name, value.data(), value.size());
+            if (v >= 0 || errno != ERANGE) break;
+        }
+        if (v < 0) {
+            if (errno == ENODATA) continue;  // removed meanwhile
+            return "getxattr(" + what + ", " + name + "): " + strerror(errno);
+        }
+        if (fsetxattr(to, name, value.data(), v, 0) != 0)
+            return "Cannot keep the attribute " + std::string(name) + " of " + what + ": " + strerror(errno);
+    }
+    return "";
 }
 
-static void mkdir_p(const std::string& path) {
-    for (size_t i = 1; i <= path.size(); ++i) {
-        if (i == path.size() || path[i] == '/') {
-            auto sub = path.substr(0, i);
-            if (sub.empty()) continue;
-            if (mkdir(sub.c_str(), 0777) == 0) {
-                if (chown(sub.c_str(), _nobody_uid, _nobody_gid) != 0)
-                    log_err("chown(" + sub + "): " + strerror(errno));
-            } else if (errno != EEXIST) {
-                log_err("mkdir(" + sub + "): " + strerror(errno));
-            }
+// Gives the copy the original's owner, extended attributes and mode, in that
+// order: a chown clears setuid/setgid and file capabilities. "" or the error.
+static std::string keep_metadata(int from, int to, const struct stat& st, const std::string& what) {
+    if (fchown(to, st.st_uid, st.st_gid) != 0) return "chown(" + what + "): " + strerror(errno);
+    if (auto err = copy_xattrs(from, to, what); !err.empty()) return err;
+    if (fchmod(to, st.st_mode & 07777) != 0) return "chmod(" + what + "): " + strerror(errno);
+    return "";
+}
+
+struct NewDir { std::string path; struct stat orig; };
+
+// Creates the folders of dir that are missing below pool_root, each like its
+// counterpart below src_root on the array. made gets them, outermost first,
+// so their times can be set once the file is in. "" or the error.
+static std::string make_dirs(const std::string& dir, const std::string& pool_root,
+                             const std::string& src_root, std::vector<NewDir>& made) {
+    for (auto i = pool_root.size() + 1; i <= dir.size(); ++i) {
+        if (i != dir.size() && dir[i] != '/') continue;
+        auto sub = dir.substr(0, i);
+        if (mkdir(sub.c_str(), 0700) != 0) {
+            if (errno == EEXIST) continue;
+            return "mkdir(" + sub + "): " + strerror(errno);
         }
+        auto orig = src_root + sub.substr(pool_root.size());
+        made.push_back({sub, {}});
+        int from = open(orig.c_str(), O_RDONLY | O_DIRECTORY | O_NOATIME | O_CLOEXEC);
+        if (from < 0 && errno == EPERM) from = open(orig.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (from < 0) return "open(" + orig + "): " + strerror(errno);
+        int to = open(sub.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        std::string err;
+        if (to < 0) err = "open(" + sub + "): " + strerror(errno);
+        else if (fstat(from, &made.back().orig) != 0) err = "fstat(" + orig + "): " + strerror(errno);
+        else err = keep_metadata(from, to, made.back().orig, sub);
+        if (to >= 0) close(to);
+        close(from);
+        if (!err.empty()) return err;
     }
+    return "";
 }
 
 static std::vector<std::string> split_csv(const std::string& s) {
@@ -1305,8 +1353,7 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
     auto tmp_dir = dst.substr(0, dst.rfind('/'));
     while (tmp_dir.size() > pool_root.size() && access(tmp_dir.c_str(), F_OK) != 0)
         tmp_dir = tmp_dir.substr(0, tmp_dir.rfind('/'));
-    mode_t mode = (before.st_mode & 0222) ? 0666 : 0444;
-    tmp_fd = open(tmp_dir.c_str(), O_TMPFILE | O_WRONLY | O_CLOEXEC, mode);
+    tmp_fd = open(tmp_dir.c_str(), O_TMPFILE | O_WRONLY | O_CLOEXEC, 0600);
     if (tmp_fd < 0)
         return end(Handover::failed, "Cannot create a nameless file in " + tmp_dir +
                                      " for the copy (O_TMPFILE): " + strerror(errno));
@@ -1332,12 +1379,13 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
         }
     }
 
-    // Unraid-standard permissions and ownership. Keep the original mtime;
-    // atime = now: the promotion is itself an access, and the array copy's
-    // atime is stale (Unraid mounts disks noatime), which would make Mover
-    // Tuning's ATIME filter demote the file on its next run.
-    fchmod(tmp_fd, mode);
-    if (fchown(tmp_fd, _nobody_uid, _nobody_gid) != 0) log_err("chown(" + dst + "): " + strerror(errno));
+    // Exactly the original's permissions, owner and attributes, as the Mover
+    // keeps them: Unspin changes nothing about a file but its place. Keep the
+    // original mtime; atime = now: the promotion is itself an access, and the
+    // array copy's atime is stale (Unraid mounts disks noatime), which would
+    // make Mover Tuning's ATIME filter demote the file on its next run.
+    if (auto err = keep_metadata(src_fd, tmp_fd, before, dst); !err.empty())
+        return end(Handover::failed, err + " - " + qpath(src) + " stays on the array");
     struct timespec times[2] = { {0, UTIME_NOW}, before.st_mtim };
     futimens(tmp_fd, times);
     // On the pool for good before the original goes: else a power cut could lose both.
@@ -1368,11 +1416,20 @@ static Handover move_to_cache(const std::string& src, const std::string& dst, st
                 "both kept: " + qpath(orig) + " and " + qpath(dst));
     };
 
-    mkdir_p(dst.substr(0, dst.rfind('/')));
+    std::vector<NewDir> made;
+    auto src_root = src.substr(0, src.find('/', MNT_PREFIX.size()));
+    if (auto err = make_dirs(dst.substr(0, dst.rfind('/')), pool_root, src_root, made); !err.empty()) {
+        remove_new_dirs(dst, tmp_dir);
+        return done_with(Handover::failed, err + " - " + qpath(src) + " stays on the array");
+    }
     if (linkat(tmp_fd, "", AT_FDCWD, dst.c_str(), AT_EMPTY_PATH) != 0) {
         auto err = errno;
         remove_new_dirs(dst, tmp_dir);
         return done_with(Handover::failed, "linkat(" + dst + "): " + strerror(err));
+    }
+    for (auto& d : made) {  // after the link, which changed their mtime
+        struct timespec t[2] = { d.orig.st_atim, d.orig.st_mtim };
+        utimensat(AT_FDCWD, d.path.c_str(), t, AT_SYMLINK_NOFOLLOW);
     }
 
     if (rename_noreplace(src, hidden) != 0) {
@@ -3680,8 +3737,8 @@ static bool take_instance_lock() {
 }
 
 int main(int argc, char* argv[]) {
-    // Honor explicit modes on mkdir/open without inherited-umask masking;
-    // directory creation relies on this to produce 0777 rather than 0755.
+    // Honor explicit modes on mkdir/open without inherited-umask masking
+    // (promotions set the exact modes with fchmod anyway).
     umask(0);
 
     auto override_dry_run = false;
@@ -3728,7 +3785,6 @@ int main(int argc, char* argv[]) {
     install_crash_handlers();
     log_config();
     recover_handover();
-    init_nobody();
     load_stats();
     load_wakeups();
     load_spinup();
