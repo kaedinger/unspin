@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- docs: Fix Common Problems' warning on the beta channel can be ignored
+
 ### 2026.11.19.74361
 - feat: Promotion and Spin-ups, a file whose disk was spun down when its rule fired is promoted once the disk spins up for another reason, optionally waiting for parity too
 - feat: Promote Now, promote a folder of a user share on request, right away or once its disks spin up anyway, also via rc.unspin promote

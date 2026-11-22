@@ -49,7 +49,29 @@ Unspin promotes files because they're *read*, so the natural way to demote them 
 
 ## Screenshots
 
-*(new screenshots coming)*
+**Settings**
+
+![Settings 1](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr1_settings.png)
+
+![Settings 2](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr2_settings.png)
+
+**Promoted to Cache**
+
+![Promoted to Cache statistics](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr_cache_statistics.png)
+
+**Disk Spin-ups**
+
+![Disk Spin-ups statistics](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr_spinup_statistics.png)
+
+![Latest Disk Spin-ups](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr_latest_spinups.png)
+
+**Detected Shares**
+
+![Detected Shares](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr_detected_shares.png)
+
+**Activity Log**
+
+![Activity Log](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr3_log.png)
 
 ## Installation
 

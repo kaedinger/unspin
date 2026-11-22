@@ -87,6 +87,7 @@ New features come out as betas first. The switch at the bottom right of the sett
 - **Every stable release reaches the beta channel too**, either under the same number or inside the next beta. Beta users never miss a fix.
 - **Settings stay** when you switch. Going back to stable drops settings that only exist in the beta the next time you save; they come back with their defaults if you switch to beta again.
 - **Community Applications:** on the beta channel, CA doesn't list Unspin under *Installed Apps*, because CA only recognizes the stable version. Unspin keeps working and updating as usual; manage it on the Plugins page.
+- **Fix Common Problems** warns on the beta channel that Unspin is not known to Community Applications. Same reason: CA only knows the stable version. Nothing is wrong; you can ignore that warning.
 
 To install the beta directly:
 
