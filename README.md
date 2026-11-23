@@ -9,9 +9,12 @@ Automatically promotes your most-accessed files to faster storage using a lightw
 <p align="center">
   <a href="https://github.com/kaedinger/unspin/releases/latest"><img src="https://img.shields.io/github/v/release/kaedinger/unspin?style=flat-square" alt="Latest Release"></a>
   <a href="https://github.com/kaedinger/unspin/releases"><img src="https://img.shields.io/github/release-date/kaedinger/unspin?style=flat-square" alt="Release Date"></a>
-  <a href="https://unraid.net/"><img src="https://img.shields.io/badge/Unraid-tested%20with%207.2.4-white?logo=unraid&logoColor=white&labelColor=orange" alt="Tested with Unraid 7.2.4"></a>
+  <a href="https://github.com/kaedinger/unspin/releases"><img src="https://img.shields.io/github/v/release/kaedinger/unspin?include_prereleases&sort=date&label=beta&color=orange&style=flat-square" alt="Latest Beta"></a>
+  <a href="https://github.com/kaedinger/unspin/releases"><img src="https://img.shields.io/github/release-date-pre/kaedinger/unspin?label=beta%20release%20date&style=flat-square" alt="Beta Release Date"></a>
+  <br>
+  <a href="https://unraid.net/"><img src="https://img.shields.io/badge/Unraid-tested%20with%207.3.2-white?logo=unraid&logoColor=white&labelColor=orange" alt="Tested with Unraid 7.3.2"></a>
   <a href="https://github.com/kaedinger/unspin/issues"><img src="https://img.shields.io/github/issues/kaedinger/unspin?style=flat-square" alt="Open Issues"></a>
-  <a href="https://forums.unraid.net/topic/198091-plugin-unspin-rudimentary-hot-file-tiering-for-unraid/"><img src="https://img.shields.io/badge/Support-Unraid%20Forum-F15A2C?style=flat-square" alt="Support Thread"></a>
+  <a href="https://forums.unraid.net/topic/198091-plugin-unspin-rudimentary-hot-file-tiering-for-unraid/"><img src="https://img.shields.io/badge/Support-Unraid%20Forum-F15A2C?style=flat-square&color=orange" alt="Support Thread"></a>
 </p>
 
 ---
