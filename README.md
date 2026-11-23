@@ -155,6 +155,8 @@ unspin/
 | `LOG_TRIM_SIZE_MB` | `5` | Size the log is trimmed down to (whole lines kept) |
 | `MOUNT_WAIT_TIMEOUT_MINS` | `45` | Max minutes to wait for each scan path to mount at boot (0 = don't wait) |
 | `MOUNT_RETRY_INTERVAL_SECS` | `30` | Seconds between mount re-checks while waiting |
+| `COMPANION_LABEL` | `no` | Not on the settings page. Show the name next to Unwake's icon in the pill at the top right of the settings page (`yes`), or the icon only (`no`). |
+| `COMPANION_HINT` | `yes` | Not on the settings page. While Unwake isn't installed, the pill says that Unspin works best with Unwake and links to it (`yes`); `no` hides the pill instead. |
 
 ### Using Unspin with Mover Tuning
 

@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- docs: the companion pill's two settings in unspin.cfg
+
 ### 2026.11.23.42973-beta
 - feat: quick link to Unwake when it's installed
 
