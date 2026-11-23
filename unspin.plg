@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- feat: quick link to Unwake when it's installed
+
 ### 2026.11.22.49475
 - fix: promotions always keep a file's permissions, owner and attributes
 - fix: a promotion held back by the Mover, rsync or a pause runs within a minute once it's done

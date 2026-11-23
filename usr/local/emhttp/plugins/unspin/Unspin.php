@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /* Unspin - Settings page for Unraid
  * Included by Unspin.page
  * All POST actions are handled by include/exec.php via jQuery $.post().
@@ -315,7 +315,73 @@ dt.hf-share-name {
 .hf-pool-row { width: var(--hf-col); max-width: 100%; margin-bottom: 4px; }
 .hf-pool-mnt { flex: 0 0 9em; font-family: monospace; }
 .hf-pool-size { margin-left: auto; opacity: 0.7; white-space: nowrap; }
+
+/* Companion pill (Unwake): top right of this page, stays below Unraid's menu bar while scrolling */
+#hf-companion { position: relative; height: 0; }
+#hf-companion a {
+  position: fixed;
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5em;
+  min-width: 2.4em;
+  height: 2.4em;
+  max-width: 60vw;
+  box-sizing: border-box;
+  padding: 0 .7em;
+  border-radius: 1.2em;
+  border: 1px solid rgba(128,128,128,0.45);
+  background: var(--background-color, #1c1b1b);
+  color: inherit;
+  font-size: 1.1em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.75;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+#hf-companion a.hf-icon-only { padding: 0; }
+/* The name: lettering of Unraid's buttons, without their colors */
+#hf-companion a span { font-family: clear-sans; font-size: 1.1rem; font-weight: bold; letter-spacing: 1.8px; text-transform: uppercase; }
+#hf-companion a.hf-hint { font-size: .9em; height: 2.2em; }
+#hf-companion a:hover { opacity: 1; }
 </style>
+
+<?php
+// Companion pill: Unwake's settings when it's installed, else (COMPANION_HINT) a hint
+// to install it. COMPANION_LABEL adds the name to the icon. Both only in unspin.cfg.
+$uw_installed = is_file('/usr/local/emhttp/plugins/unwake/Unwake.page');
+$uw_label     = ($c['COMPANION_LABEL'] ?? 'no') === 'yes';
+$uw_hint      = ($c['COMPANION_HINT'] ?? 'yes') === 'yes';
+if ($uw_installed || $uw_hint):
+?>
+<div id="hf-companion">
+<?php if ($uw_installed): ?>
+  <a href="Unwake" title="Unwake: open its settings"<?= $uw_label ? '' : ' class="hf-icon-only"' ?>><i class="fa fa-moon-o"></i><?= $uw_label ? '<span>Unwake</span>' : '' ?></a>
+<?php else: ?>
+  <a class="hf-hint" href="https://github.com/kaedinger/unwake" target="_blank" rel="noopener" title="Unwake keeps folder listings in RAM, so they don't spin up your disks">Unspin works best with <i class="fa fa-moon-o"></i> Unwake installed</a>
+<?php endif; ?>
+</div>
+<script>
+// Fixed to the window: starts at the top right of this page and, once scrolled, stays
+// below Unraid's menu bar where that sticks to the top (desktop, top-bar themes)
+(function () {
+  var box = document.getElementById('hf-companion'), pill = box.firstElementChild;
+  function place() {
+    var r = box.getBoundingClientRect(), m = document.getElementById('menu');
+    var below = (m && getComputedStyle(m).position === 'sticky') ? Math.max(0, m.getBoundingClientRect().bottom) : 0;
+    pill.style.top   = Math.max(r.top, below + 8) + 'px';
+    pill.style.right = Math.max(0, document.documentElement.clientWidth - r.right) + 'px';
+  }
+  place();
+  window.addEventListener('scroll', place, { capture: true, passive: true });
+  window.addEventListener('resize', place);
+  window.addEventListener('load', place);
+})();
+</script>
+<?php endif; ?>
 
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
 

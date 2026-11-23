@@ -110,6 +110,9 @@ if ($action === 'save') {
     $k = 'PROMOTE_ON_SPINUP';         $cfg[$k] = $enum($k, ['yes','parity','no']);
     $k = 'MOUNT_WAIT_TIMEOUT_MINS';   $cfg[$k] = $pint($k, 0);
     $k = 'MOUNT_RETRY_INTERVAL_SECS'; $cfg[$k] = $pint($k, 1);
+    // Not on the settings page, only in unspin.cfg: kept as they are
+    $k = 'COMPANION_LABEL';           $cfg[$k] = $yn($k);
+    $k = 'COMPANION_HINT';            $cfg[$k] = $yn($k);
     save_cfg(UNSPIN_CFG, $cfg);
     $saved_cfg = $cfg;
 
