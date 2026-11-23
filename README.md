@@ -306,6 +306,8 @@ A file is never lost, doubled, left half-copied or missing from the share: whate
 
 GPLv2. Contributions welcome - open an issue or PR on GitHub.
 
-## AI slop included? / History
+## History
 
-Claude has been mainly used to simplify refactoring, restructuring, commenting & documenting, cleaning up etc. It wrote the first version of this Readme. It also helped immensely setting up the general structure of an Unraid plugin and with getting the settings page right. BUT: Every functional code line has been human written at some point by meticulously reordering bits on an old hard drive using a VERY small magnet. Jokes aside, this one started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and wanted to give something back to its fantastic community, I turned it into this plugin.
+Unspin started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and wanted to give something back to its fantastic community, I turned it into this plugin.
+
+The idea and those origins are entirely human-made. The plugin grew from that daemon with Claude Code, and is tested on my own server.

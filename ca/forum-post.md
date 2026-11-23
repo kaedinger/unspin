@@ -4,6 +4,8 @@ Unspin automatically promotes your most-accessed files to faster storage (cache/
 
 It also tells you **which program, container, VM or SMB client spun up each of your disks**, so the eternal "what spun up my disk?" question finally gets an answer.
 
+It's the brother of [Unwake](https://github.com/kaedinger/unwake), which has the same goal for browsing: Unspin keeps reading files from waking your disks, Unwake keeps folder listings from doing so.
+
 There's no explicit cold demotion - Unraid's mover (or Mover Tuning, see below) takes care of that.
 
 **Make sure this does what you want! There's a dry-run mode; use it!**
@@ -32,7 +34,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 - **Detected Shares** - the settings page lists every share with its routing and a Watch toggle to opt individual shares out
 - **Promote now** - promote a folder (optionally with its subfolders) on request, from the settings page or `rc.unspin promote`: right away, or once its disks spin up anyway
 - **Per-pool fill guard** - each pool gets its own fill % limit; promotion to that pool stops once it's exceeded (ZFS pools with child datasets included)
-- **Disk Spin-ups** - which program, container, VM or SMB client (user and IP) spun up which disk, with counts per day and the latest spin-ups. Access through user shares is traced back to the program that asked for the file. Directory listings, name lookups and metadata writes are named as such
+- **Disk Spin-ups** - which program, container, VM or SMB client (user and IP) spun up which disk, with counts per day and the latest spin-ups. Access through user shares is traced back to the program that asked for the file. Directory listings, name lookups and metadata writes are named as such - those are the ones Unwake prevents
 - **Promotion statistics** - files and size moved to each pool today, per day on average and in total
 - **Mover / rsync aware** - pauses while Unraid's mover (including Mover Tuning) or, optionally, any rsync runs
 - **Named pause locks for backups** - stackable `rc.unspin pause NAME`, optionally timed (`--ttl 15m`) so a crashed backup job can't leave Unspin paused forever
@@ -125,6 +127,8 @@ ssh root@nas /etc/rc.d/rc.unspin unpause mybackup
 - **Issues / feature requests:** https://github.com/kaedinger/unspin/issues
 - **License:** GPLv2
 
-### AI disclaimer / History
+### History
 
-Claude has been mainly used to simplify refactoring, restructuring, commenting & documenting, cleaning up etc. It also helped immensely setting up the general structure of an Unraid plugin and with getting the settings page right. BUT: Every functional code line has been human written at some point by meticulously reordering bits on an old hard drive using a VERY small magnet. Jokes aside, this one started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and wanted to give something back to its fantastic community, I turned it into this plugin.
+Unspin started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and wanted to give something back to its fantastic community, I turned it into this plugin.
+
+The idea and those origins are entirely human-made. The plugin grew from that daemon with Claude Code, and is tested on my own server.
