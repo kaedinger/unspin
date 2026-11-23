@@ -1,4 +1,4 @@
-# Unspin - Rudimentary Hot-File Tiering for Unraid
+## Unspin - Rudimentary Hot-File Tiering for Unraid
 
 Unspin automatically promotes your most-accessed files to faster storage (cache/NVMe) using a lightweight C++ daemon that watches file access in real time. The main goal is to have fewer disk spin-ups (hence the name), but we'll take the faster access, too ;-)
 
@@ -8,7 +8,7 @@ There's no explicit cold demotion - Unraid's mover (or Mover Tuning, see below) 
 
 **Make sure this does what you want! There's a dry-run mode; use it!**
 
-## How It Works
+### How It Works
 
 Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to receive an event every time a file is opened or read on your array disks. It applies three configurable promotion rules:
 
@@ -18,13 +18,13 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 
 **Why these rules?** Under ideal circumstances we would cache everything - but we don't have the space. We can't have a huge Linux ISO using up precious cache space if it's just held open for a few bytes of torrent upload. But of course that changes if it's being constantly read, or accessed on a regular basis. You'll have to play around with the rule settings to best match your own use cases.
 
-### Safe by design
+#### Safe by design
 
 - **Promotion waits until the file is closed everywhere.** A movie you're watching keeps playing from the array and is promoted after you stop; the next open picks up the cache copy. (No live switching during playback.)
 - **A file is never lost, doubled, left half-copied or missing from the share.** The copy stays invisible until it's complete and is only swapped in if nobody moved, changed, deleted or opened the file in the meantime. Whatever you do with the file during a promotion wins, and Unspin simply tries again later. Even a crash mid-promotion is cleaned up on the next start.
 - **Unspin never spins up a data disk.** A file read from RAM while its disk is spun down is marked and promoted once the disk spins up for another reason. Removing the original from the array is a write, so a spun-down parity disk spins up for it, unless you let Unspin wait for parity too or skip such promotions. Every decision is logged.
 
-## Features
+### Features
 
 - **Event-driven** - reacts to each file read in real time via fanotify, no polling or cron
 - **Three-rule promotion** - separate thresholds for small files and large files (streaming burst / periodic access), each rule can be switched on or off
@@ -43,11 +43,11 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 - **Exclude patterns** - skip any path substring
 - **Live log viewer** and, on debug logging, the recently accessed files per disk
 
-## Using Unspin with Mover Tuning
+### Using Unspin with Mover Tuning
 
 Unspin promotes files because they're *read*, so the natural way to demote them is Mover Tuning's age filter with **Use ATIME**: files go back to the array once they haven't been accessed for a while. Unraid mounts every pool with `noatime`, so access times never change on a read - switch on **Pool Access Times** in Unspin's settings to fix that for the pools it promotes into. Promoted files get the promotion time as their access time, so they aren't demoted on Mover Tuning's next run.
 
-## Screenshots
+### Screenshots
 
 **Settings**
 
@@ -73,7 +73,7 @@ Unspin promotes files because they're *read*, so the natural way to demote them 
 
 ![Activity Log](https://raw.githubusercontent.com/kaedinger/unspin/main/images/scr3_log.png)
 
-## Installation
+### Installation
 
 **Via Community Applications (recommended):** search for **Unspin** and click Install.
 
@@ -85,7 +85,7 @@ plugin install https://github.com/kaedinger/unspin/releases/latest/download/unsp
 
 **Beta channel:** new features come out as betas first. At the bottom right of the settings page you can switch between stable and beta, see the newest version on each channel, and update. Every stable release reaches the beta channel too. On the beta channel, Community Applications doesn't list Unspin under *Installed Apps*; it keeps working and updating as usual, manage it on the Plugins page.
 
-## Pause for Backups
+### Pause for Backups
 
 Wrap your backup jobs with pause/unpause over SSH so Unspin doesn't count (or promote) files while your backup tool reads them:
 
@@ -97,7 +97,7 @@ ssh root@nas /etc/rc.d/rc.unspin unpause borgbackup
 
 Each lock has a name, and locks stack - multiple backup tools can pause independently, and Unspin only resumes once all of them are released. `rc.unspin status` lists the locks currently held.
 
-### Locks that expire
+#### Locks that expire
 
 A normal lock stays until it's released, so if the job that set it dies (killed, crashed, its VM stopped mid-run), Unspin stays paused until you unpause it or reboot. To avoid that, give the lock a time to live and refresh it while the job runs:
 
@@ -114,17 +114,17 @@ ssh root@nas /etc/rc.d/rc.unspin unpause mybackup
 - A lock that isn't refreshed in time is removed and logged as `Pause lock expired - mybackup`.
 - `rc.unspin status` shows how long each of these locks has left.
 
-## Requirements
+### Requirements
 
 - Unraid 7.0+ (probably even earlier, but tested with 7.2.3 onwards, currently 7.2.4)
 - No external dependencies - single C++ binary
 
-## Links
+### Links
 
 - **GitHub:** https://github.com/kaedinger/unspin
 - **Issues / feature requests:** https://github.com/kaedinger/unspin/issues
 - **License:** GPLv2
 
-## AI disclaimer / History
+### AI disclaimer / History
 
 Claude has been mainly used to simplify refactoring, restructuring, commenting & documenting, cleaning up etc. It also helped immensely setting up the general structure of an Unraid plugin and with getting the settings page right. BUT: Every functional code line has been human written at some point by meticulously reordering bits on an old hard drive using a VERY small magnet. Jokes aside, this one started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and wanted to give something back to its fantastic community, I turned it into this plugin.
