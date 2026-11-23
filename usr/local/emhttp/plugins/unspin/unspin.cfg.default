@@ -76,7 +76,7 @@ LOG_TRIM_SIZE_MB="5"
 # Companion pill at the top right of the settings page (not on the page itself):
 # show the name next to Unwake's icon (yes/no), and, while Unwake isn't
 # installed, a hint that Unspin works best with it (yes/no).
-COMPANION_LABEL="no"
+COMPANION_LABEL="yes"
 COMPANION_HINT="yes"
 
 # Wait for slow-mounting arrays/pools before watching (boot race).
