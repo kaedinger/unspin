@@ -19,6 +19,9 @@
 >
 
 <CHANGES>
+### next
+- fix: Promote now "when the disks spin up" no longer spins up a disk to look up the folder
+
 ### 2026.11.23.44481-beta
 - feat: the Unwake link shows its name next to the icon
 - docs: the companion pill's two settings in unspin.cfg

@@ -428,10 +428,10 @@ if ($uw_installed || $uw_hint):
         <input type="button" value="Promote" onclick="hfPromote()">
       </div>
     </div>
-    <div class="hf-help">Promote the files of a folder in a user share, without waiting for the rules. Pick the folder from the list that opens below the path line, or type it; with <strong>Include subfolders</strong>, everything below it too. Browsing the list and the promotion's own look-up of the folder on every array disk can spin up a disk whose folder listing isn't in RAM.
+    <div class="hf-help">Promote the files of a folder in a user share, without waiting for the rules. Pick the folder from the list that opens below the path line, or type it; with <strong>Include subfolders</strong>, everything below it too. Browsing the list can spin up a disk whose folder listing isn't in RAM.
       <ul>
-        <li><strong>When the disks spin up anyway:</strong> each file is promoted once its disk spins up for another reason (and parity too, if <strong>Promotion and Spin-ups</strong> waits for parity).</li>
-        <li><strong>Now:</strong> the files are promoted right away, one after another. Spun-down disks and parity spin up for it.</li>
+        <li><strong>When the disks spin up anyway:</strong> each file is promoted once its disk spins up for another reason (and parity too, if <strong>Promotion and Spin-ups</strong> waits for parity). The folder is looked up right away only on disks that are up; on a spun-down disk that happens once it spins up.</li>
+        <li><strong>Now:</strong> the folder is looked up on every array disk and the files are promoted right away, one after another. Spun-down disks and parity spin up for it.</li>
       </ul>
       Works for every share with a cache pool, even one Unspin doesn't watch; <strong>Exclude Patterns</strong> still apply. Files already on the pool are left alone. The usual checks stay: the pool fill limit (files wait for space), open files, the Mover and pauses. Waiting files are listed under <strong>Promoted to Cache</strong>, survive a reboot, and are dropped with <strong>Cancel Requests</strong>. Every step is logged. A later Mover run can move the files back to the array, depending on its own settings. Scripts can do the same with <code>/etc/rc.d/rc.unspin promote /mnt/user/share/folder [--recursive] [--now]</code>.</div>
   </dd>
