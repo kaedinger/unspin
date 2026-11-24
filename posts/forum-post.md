@@ -132,3 +132,5 @@ ssh root@nas /etc/rc.d/rc.unspin unpause mybackup
 Unspin started as a batch script a few years ago on my old Ubuntu machine Gregory (RIP), then turned into a C++ daemon for a proprietary project I did for a German car company (where it was called Hotfile and already using fanotify). As I started using Unraid this year and wanted to give something back to its fantastic community, I turned it into this plugin.
 
 The idea and those origins are entirely human-made. The plugin grew from that daemon with Claude Code, and is tested on my own server.
+
+<sub>Current stable version when this post was written: 2026.11.22.49475</sub>
