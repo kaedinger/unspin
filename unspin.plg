@@ -20,6 +20,7 @@
 
 <CHANGES>
 ### next
+- fix: Promote now "when the disks spin up" no longer spins up a disk to look up the folder
 - docs: Disk Spin-ups help recommends Unwake instead of Dynamix Cache Directories
 
 ### 2026.11.23.44481-beta

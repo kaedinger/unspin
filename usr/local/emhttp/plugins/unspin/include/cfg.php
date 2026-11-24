@@ -112,17 +112,25 @@ function spin_mark($spinning) {
 // without promotions included, so the per-pool averages add up to the sum.
 // Files marked for promotion while their disk slept (daemon's spinup file,
 // "epoch\trule\tpath" lines), as one line counting them per disk; '' if none.
+// Folders of Promote now requests, still to be listed on a sleeping disk, are
+// counted on their own.
 function spinup_waiting() {
     $disks = [];
     foreach (stats_lines('spinup') as $line) {
         $f = explode("\t", $line, 3);
         if (count($f) !== 3 || !preg_match('#^/mnt/([^/]+)/#', $f[2], $m)) continue;
-        $disks[$m[1]] = ($disks[$m[1]] ?? 0) + 1;
+        $k = strpos($f[1], 'promote on spin-up: folder') === 0 ? 1 : 0;
+        $disks[$m[1]][$k] = ($disks[$m[1]][$k] ?? 0) + 1;
     }
     if (!$disks) return '';
     uksort($disks, 'strnatcmp');
     $parts = [];
-    foreach ($disks as $d => $n) $parts[] = htmlspecialchars($d) . ": $n " . ($n === 1 ? 'file' : 'files');
+    foreach ($disks as $d => $c) {
+        $p = [];
+        if ($n = $c[0] ?? 0) $p[] = "$n " . ($n === 1 ? 'file' : 'files');
+        if ($n = $c[1] ?? 0) $p[] = $n === 1 ? 'checking folder' : "checking $n folders";
+        $parts[] = htmlspecialchars($d) . ': ' . implode(' + ', $p);
+    }
     return '<div class="hf-spinup-wait">Waiting for promotion: ' . implode(', ', $parts) . '</div>';
 }
 
