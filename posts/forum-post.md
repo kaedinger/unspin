@@ -44,6 +44,7 @@ Unspin runs `unspind`, a daemon that uses Linux's **fanotify** interface to rece
 - **Dry-run mode** - logs every decision without moving anything
 - **Exclude patterns** - skip any path substring
 - **Live log viewer** and, on debug logging, the recently accessed files per disk
+- **Unwake link** - at the top right of the settings page, a link to Unwake's settings when it's installed, or a hint to install it
 
 ### Using Unspin with Mover Tuning
 
@@ -118,7 +119,7 @@ ssh root@nas /etc/rc.d/rc.unspin unpause mybackup
 
 ### Requirements
 
-- Unraid 7.0+ (probably even earlier, but tested with 7.2.3 onwards, currently 7.2.4)
+- Unraid 7.0+ (probably even earlier, but tested with 7.2.3 onwards, currently 7.3.2)
 - No external dependencies - single C++ binary
 
 ### Links
@@ -133,4 +134,4 @@ Unspin started as a batch script a few years ago on my old Ubuntu machine Gregor
 
 The idea and those origins are entirely human-made. The plugin grew from that daemon with Claude Code, and is tested on my own server.
 
-<sub>Current stable version when this post was written: 2026.11.22.49475</sub>
+<sub>Current stable version when this post was written: 2026.11.25.54993</sub>
