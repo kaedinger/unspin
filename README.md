@@ -158,6 +158,8 @@ unspin/
 | `LOG_TRIM_SIZE_MB` | `5` | Size the log is trimmed down to (whole lines kept) |
 | `MOUNT_WAIT_TIMEOUT_MINS` | `45` | Max minutes to wait for each scan path to mount at boot (0 = don't wait) |
 | `MOUNT_RETRY_INTERVAL_SECS` | `30` | Seconds between mount re-checks while waiting |
+| `COMPANION_LABEL` | `yes` | Not on the settings page. Show the name next to Unwake's icon in the pill at the top right of the settings page (`yes`), or the icon only (`no`). |
+| `COMPANION_HINT` | `yes` | Not on the settings page. While Unwake isn't installed, the pill says that Unspin works best with Unwake and links to it (`yes`); `no` hides the pill instead. |
 
 ### Using Unspin with Mover Tuning
 
@@ -230,8 +232,8 @@ rc.unspin promote cancel                                                    # dr
 ```
 
 - The path must be in a user share with a cache pool; the share doesn't have to be watched. Exclude Patterns still apply.
-- The folder is listed on every array disk right away, which can spin up a disk whose folder listing isn't in RAM.
-- Without `--now`, each file waits until its disk spins up for another reason (and parity, if Promotion and Spin-ups waits for parity). With `--now`, spun-down disks and parity spin up.
+- Without `--now`, the folder is listed right away only on the disks that are up, and on a spun-down disk once it spins up for another reason. Each file then waits until its disk is up (and parity, if Promotion and Spin-ups waits for parity).
+- With `--now`, the folder is listed on every array disk right away, and spun-down disks and parity spin up.
 - Files are promoted one after another with the usual checks: the pool fill limit (files wait for space), open files, the Mover and pauses. Waiting files survive a reboot and are listed on the settings page under Promoted to Cache.
 
 The daemon also accepts signals directly (no stacking):

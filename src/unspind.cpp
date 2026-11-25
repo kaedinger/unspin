@@ -2595,8 +2595,15 @@ static void write_spinup_live_now() {
 // Both apply whatever PROMOTE_ON_SPINUP says, and to unwatched shares too.
 static const std::string RULE_PROMOTE_NOW    = "promote now";
 static const std::string RULE_PROMOTE_SPINUP = "promote on spin-up";
+// A request "when the disks spin up" doesn't list the folder on a sleeping disk
+// (that could wake it): the folder itself is marked, and listed once it's up.
+static const std::string RULE_SPINUP_FOLDER  = "promote on spin-up: folder";
+static const std::string RULE_SPINUP_TREE    = "promote on spin-up: folder and subfolders";
+static bool folder_rule(const std::string& rule) {
+    return rule == RULE_SPINUP_FOLDER || rule == RULE_SPINUP_TREE;
+}
 static bool manual_rule(const std::string& rule) {
-    return rule == RULE_PROMOTE_NOW || rule == RULE_PROMOTE_SPINUP;
+    return rule == RULE_PROMOTE_NOW || rule == RULE_PROMOTE_SPINUP || folder_rule(rule);
 }
 
 // Rule-based promotions need a watched share with a cache pool; requested
@@ -3096,17 +3103,42 @@ static std::unordered_set<std::string> _pool_full_logged;
 
 static bool _marks_busy = false;   // the last pass handled a marked file: the next one starts right away
 
+static void mark_base(const std::string& base, bool recursive, const std::string& rule, int& added, int& excluded);
+
+// Folders of requests "when the disks spin up" whose disk is up now: listed,
+// and their files marked like the other disks' were on the request.
+static void expand_folder_marks() {
+    std::vector<std::pair<std::string, std::string>> ready;   // folder, rule
+    for (const auto& [p, m] : _spinup) {
+        if (!folder_rule(m.rule)) continue;
+        auto disk = disk_for_path(p);
+        if (disk && !disk->spundown) ready.emplace_back(p, m.rule);
+    }
+    for (const auto& [base, rule] : ready) {
+        _spinup.erase(base);
+        spinup_changed();
+        auto added = 0, excluded = 0;
+        mark_base(base, rule == RULE_SPINUP_TREE, RULE_PROMOTE_SPINUP, added, excluded);
+        auto msg = "[" + RULE_PROMOTE_SPINUP + "] " + disk_for_path(base)->name + " is up: " + std::to_string(added) +
+                   " file(s) marked in " + qpath(base) + (rule == RULE_SPINUP_TREE ? " and its subfolders" : "") +
+                   (excluded ? ", " + std::to_string(excluded) + " skipped by Exclude Patterns" : "");
+        if (added || excluded) log_info(msg); else log_debug(msg);
+    }
+}
+
 static void promote_marked() {
     _marks_busy = false;
     if (_spinup.empty()) return;
+    update_disk_state();
+    expand_folder_marks();
     if (is_paused() || transfers_active()) return;
     auto now = time(nullptr);
     if (now < _marks_wait_until) return;
-    update_disk_state();
     auto parity_up = std::none_of(_parity.begin(), _parity.end(), [](const DiskState& p) { return p.spundown; });
     std::unordered_map<std::string, bool> full;   // pool -> over its fill limit, checked once per pass
     auto waiting_for_space = false;
     for (auto it = _spinup.begin(); it != _spinup.end(); ++it) {
+        if (folder_rule(it->second.rule)) continue;   // its disk still sleeps
         auto disk = disk_for_path(it->first);
         if (!disk) continue;   // not mounted (array stopped)
         auto force = it->second.rule == RULE_PROMOTE_NOW;
@@ -3173,9 +3205,11 @@ static void promote_marked() {
 // ---------------------------------------------------------------------------
 
 // One file per request: "now" or "spinup" (or "cancel"), "1" for subfolders,
-// and the user share path (/mnt/user/SHARE/...), one per line. The folder is
-// listed on every array disk right away (that may spin disks up, which the
-// user accepted by asking) and its files are marked like spin-up promotions.
+// and the user share path (/mnt/user/SHARE/...), one per line. For "now" the
+// folder is listed on every array disk right away (that may spin disks up,
+// which the user accepted by asking) and its files are marked like spin-up
+// promotions. For "spinup" it's listed right away only on disks that are up;
+// on a sleeping one the folder itself is marked and listed once it's up.
 static const std::string PROMOTE_DIR = "/var/run/unspind.promote.d";
 
 static void mark_tree(const std::string& dir, bool recursive, const std::string& rule, int& added, int& excluded) {
@@ -3210,6 +3244,20 @@ static void mark_tree(const std::string& dir, bool recursive, const std::string&
     for (const auto& s : subdirs) mark_tree(s, true, rule, added, excluded);
 }
 
+// The request's path on one array disk: a folder, a file, or nothing there.
+static void mark_base(const std::string& base, bool recursive, const std::string& rule, int& added, int& excluded) {
+    struct stat st;
+    if (lstat(base.c_str(), &st) != 0) return;
+    if (S_ISDIR(st.st_mode)) mark_tree(base, recursive, rule, added, excluded);
+    else if (S_ISREG(st.st_mode)) {
+        auto& m = _spinup[base];
+        if (m.rule.empty() || (rule == RULE_PROMOTE_NOW && m.rule != RULE_PROMOTE_NOW)) {
+            if (m.rule.empty()) added++;
+            m = {rule, time(nullptr)};
+        }
+    }
+}
+
 static void handle_promote_request(const std::string& file) {
     std::ifstream f(file);
     std::string mode, recursive, upath;
@@ -3240,27 +3288,45 @@ static void handle_promote_request(const std::string& file) {
         log_warn("Promote now: share " + share + " has no cache pool to promote into, ignored: " + qpath(upath));
         return;
     }
+    update_disk_state();
     auto added = 0, excluded = 0, before = (int)_spinup.size();
+    auto changed = false;
+    std::vector<std::string> asleep;
     for (const auto& d : _disks) {
         if (d.mount.empty()) continue;
         auto base = d.mount + "/" + rel;
-        struct stat st;
-        if (lstat(base.c_str(), &st) != 0) continue;
-        if (S_ISDIR(st.st_mode)) mark_tree(base, recursive == "1", rule, added, excluded);
-        else if (S_ISREG(st.st_mode)) {
-            auto& m = _spinup[base];
-            if (m.rule.empty() || (rule == RULE_PROMOTE_NOW && m.rule != RULE_PROMOTE_NOW)) {
-                if (m.rule.empty()) added++;
-                m = {rule, time(nullptr)};
+        auto fit = _spinup.find(base);
+        auto marked = fit != _spinup.end() && folder_rule(fit->second.rule) ? fit->second.rule : "";
+        if (mode == "spinup" && d.spundown) {   // listing it could wake the disk
+            asleep.push_back(d.name);
+            if (marked != RULE_SPINUP_TREE && (recursive == "1" || marked.empty())) {
+                _spinup[base] = {recursive == "1" ? RULE_SPINUP_TREE : RULE_SPINUP_FOLDER, time(nullptr)};
+                changed = true;
+            }
+            continue;
+        }
+        if (!marked.empty()) {   // an earlier request's folder: listed now
+            _spinup.erase(base);
+            changed = true;
+            if (marked == RULE_SPINUP_TREE && recursive != "1") {   // keeps its subfolders
+                mark_base(base, true, RULE_PROMOTE_SPINUP, added, excluded);
+                if (mode == "spinup") continue;
             }
         }
+        mark_base(base, recursive == "1", rule, added, excluded);
     }
+    std::string later;
+    for (size_t i = 0; i < asleep.size(); i++)
+        later += (i ? (i + 1 == asleep.size() ? " and " : ", ") : "") + asleep[i];
+    if (!later.empty())
+        later = "; " + later + (asleep.size() == 1 ? " is" : " are") + " spun down, so the folder is listed there once " +
+                (asleep.size() == 1 ? "it spins up" : "they spin up");
     log_info("[" + rule + "] " + std::to_string(added) + " file(s) on the array marked in " + qpath(upath) +
              (recursive == "1" ? " and its subfolders" : "") +
              (excluded ? ", " + std::to_string(excluded) + " skipped by Exclude Patterns" : "") +
              (mode == "now" ? " - promoting now, spinning disks up if needed"
-                            : " - promoting when their disks spin up"));
-    if ((int)_spinup.size() != before || added) { spinup_changed(); write_spinup_live_now(); }
+                            : " - promoting when their disks spin up" + later));
+    if ((int)_spinup.size() != before || added || changed) { spinup_changed(); write_spinup_live_now(); }
     _marks_wait_until = 0;
 }
 

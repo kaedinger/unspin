@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /* Unspin - Settings page for Unraid
  * Included by Unspin.page
  * All POST actions are handled by include/exec.php via jQuery $.post().
@@ -315,7 +315,73 @@ dt.hf-share-name {
 .hf-pool-row { width: var(--hf-col); max-width: 100%; margin-bottom: 4px; }
 .hf-pool-mnt { flex: 0 0 9em; font-family: monospace; }
 .hf-pool-size { margin-left: auto; opacity: 0.7; white-space: nowrap; }
+
+/* Companion pill (Unwake): top right of this page, stays below Unraid's menu bar while scrolling */
+#hf-companion { position: relative; height: 0; }
+#hf-companion a {
+  position: fixed;
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5em;
+  min-width: 2.4em;
+  height: 2.4em;
+  max-width: 60vw;
+  box-sizing: border-box;
+  padding: 0 .7em;
+  border-radius: 1.2em;
+  border: 1px solid rgba(128,128,128,0.45);
+  background: var(--background-color, #1c1b1b);
+  color: inherit;
+  font-size: 1.1em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.75;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+#hf-companion a.hf-icon-only { padding: 0; }
+/* The name: lettering of Unraid's buttons, without their colors */
+#hf-companion a span { font-family: clear-sans; font-size: 1.1rem; font-weight: bold; letter-spacing: 1.8px; text-transform: uppercase; }
+#hf-companion a.hf-hint { font-size: .9em; height: 2.2em; }
+#hf-companion a:hover { opacity: 1; }
 </style>
+
+<?php
+// Companion pill: Unwake's settings when it's installed, else (COMPANION_HINT) a hint
+// to install it. COMPANION_LABEL adds the name to the icon. Both only in unspin.cfg.
+$uw_installed = is_file('/usr/local/emhttp/plugins/unwake/Unwake.page');
+$uw_label     = ($c['COMPANION_LABEL'] ?? 'yes') === 'yes';
+$uw_hint      = ($c['COMPANION_HINT'] ?? 'yes') === 'yes';
+if ($uw_installed || $uw_hint):
+?>
+<div id="hf-companion">
+<?php if ($uw_installed): ?>
+  <a href="Unwake" title="Unwake: open its settings"<?= $uw_label ? '' : ' class="hf-icon-only"' ?>><i class="fa fa-moon-o"></i><?= $uw_label ? '<span>Unwake</span>' : '' ?></a>
+<?php else: ?>
+  <a class="hf-hint" href="https://github.com/kaedinger/unwake" target="_blank" rel="noopener" title="Unwake keeps folder listings in RAM, so they don't spin up your disks">Unspin works best with <i class="fa fa-moon-o"></i> Unwake installed</a>
+<?php endif; ?>
+</div>
+<script>
+// Fixed to the window: starts at the top right of this page and, once scrolled, stays
+// below Unraid's menu bar where that sticks to the top (desktop, top-bar themes)
+(function () {
+  var box = document.getElementById('hf-companion'), pill = box.firstElementChild;
+  function place() {
+    var r = box.getBoundingClientRect(), m = document.getElementById('menu');
+    var below = (m && getComputedStyle(m).position === 'sticky') ? Math.max(0, m.getBoundingClientRect().bottom) : 0;
+    pill.style.top   = Math.max(r.top, below + 8) + 'px';
+    pill.style.right = Math.max(0, document.documentElement.clientWidth - r.right) + 'px';
+  }
+  place();
+  window.addEventListener('scroll', place, { capture: true, passive: true });
+  window.addEventListener('resize', place);
+  window.addEventListener('load', place);
+})();
+</script>
+<?php endif; ?>
 
 <div id="hf-message" style="min-height:1.4em;margin-bottom:4px;"></div>
 
@@ -362,10 +428,10 @@ dt.hf-share-name {
         <input type="button" value="Promote" onclick="hfPromote()">
       </div>
     </div>
-    <div class="hf-help">Promote the files of a folder in a user share, without waiting for the rules. Pick the folder from the list that opens below the path line, or type it; with <strong>Include subfolders</strong>, everything below it too. Browsing the list and the promotion's own look-up of the folder on every array disk can spin up a disk whose folder listing isn't in RAM.
+    <div class="hf-help">Promote the files of a folder in a user share, without waiting for the rules. Pick the folder from the list that opens below the path line, or type it; with <strong>Include subfolders</strong>, everything below it too. Browsing the list can spin up a disk whose folder listing isn't in RAM.
       <ul>
-        <li><strong>When the disks spin up anyway:</strong> each file is promoted once its disk spins up for another reason (and parity too, if <strong>Promotion and Spin-ups</strong> waits for parity).</li>
-        <li><strong>Now:</strong> the files are promoted right away, one after another. Spun-down disks and parity spin up for it.</li>
+        <li><strong>When the disks spin up anyway:</strong> each file is promoted once its disk spins up for another reason (and parity too, if <strong>Promotion and Spin-ups</strong> waits for parity). The folder is looked up right away only on disks that are up; on a spun-down disk that happens once it spins up.</li>
+        <li><strong>Now:</strong> the folder is looked up on every array disk and the files are promoted right away, one after another. Spun-down disks and parity spin up for it.</li>
       </ul>
       Works for every share with a cache pool, even one Unspin doesn't watch; <strong>Exclude Patterns</strong> still apply. Files already on the pool are left alone. The usual checks stay: the pool fill limit (files wait for space), open files, the Mover and pauses. Waiting files are listed under <strong>Promoted to Cache</strong>, survive a reboot, and are dropped with <strong>Cancel Requests</strong>. Every step is logged. A later Mover run can move the files back to the array, depending on its own settings. Scripts can do the same with <code>/etc/rc.d/rc.unspin promote /mnt/user/share/folder [--recursive] [--now]</code>.</div>
   </dd>
@@ -383,7 +449,7 @@ dt.hf-share-name {
     <div class="hf-help">How often spun-down array disks were spun up: today, average per day and in total, and the cause of the last spin-up. Click the line for the numbers per disk, each with its most frequent cause. Which program, container, VM or SMB client spun up each disk is shown in <em>Latest Disk Spin-ups</em> further down: the causes with their counts, and the last five spin-ups, or up to 20 with <em>more</em> under a card; hover over one for the full path. The dot before each disk shows whether it is spinning (green) or spun down. A read served from RAM doesn't spin up a disk and isn't counted.
       <br><em>Listing a directory</em>, <em>looking up a name</em>, <em>reading attributes</em>: the disk spun up for something that opens no file; the program shown was found waiting for the disk. <em>User share (requester not found)</em>: only the user share file system was found waiting, not the program that asked it.
       <br><em>Metadata change</em>: nobody waited, but XFS wrote to the disk or parity spun up too, so a change kept in RAM was written out later: file times, attributes, or a new, renamed or deleted file or folder. Backup and sync programs cause these even when no file content changed.
-      <br><em>No file opened</em>: the same as the first, but no waiting program was found. The <em>Dynamix Cache Directories</em> plugin prevents many directory listings, but not every name lookup.
+      <br><em>No file opened</em>: the same as the first, but no waiting program was found. The <a href="https://github.com/kaedinger/unwake" target="_blank" rel="noopener">Unwake</a> plugin keeps the folders of your user shares in RAM, which prevents most of these and the directory listings and name lookups above.
       <br><em>No I/O seen</em>: a command was sent to the disk itself, like a spin-up from the Main page or a SMART check.
       <br>Parity is not listed: it spins up when a data disk is written, and that write is listed under the data disk. Pools are not watched.</div>
   </dd>

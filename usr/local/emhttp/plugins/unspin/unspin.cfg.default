@@ -73,6 +73,12 @@ LOG_EXCLUDED_SHARES="no"
 LOG_MAX_SIZE_MB="64"
 LOG_TRIM_SIZE_MB="5"
 
+# Companion pill at the top right of the settings page (not on the page itself):
+# show the name next to Unwake's icon (yes/no), and, while Unwake isn't
+# installed, a hint that Unspin works best with it (yes/no).
+COMPANION_LABEL="yes"
+COMPANION_HINT="yes"
+
 # Wait for slow-mounting arrays/pools before watching (boot race).
 # Max minutes to wait for each scan path to mount (0 = don't wait, skip immediately).
 MOUNT_WAIT_TIMEOUT_MINS="45"
